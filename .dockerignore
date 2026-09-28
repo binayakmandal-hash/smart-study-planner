@@ -1,0 +1,12 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+database.db
+credentials.json
+token.json
+uploads/
+ocr_cache/
+backups/
+backup_before_redesign/
+.git/

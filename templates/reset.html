@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set active_page = 'reset' %}
+{% block title %}Reset · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow" style="color: var(--danger)"><svg class="icon"><use href="#i-reset"/></svg> Start fresh</div>
+        <h1>Reset your planner</h1>
+        <p>Clear old tasks, sessions and plans, then start again with a new syllabus or new tasks. A backup copy of your database is saved first, so nothing is lost for good.</p>
+    </div>
+</div>
+
+<div class="grid grid-main">
+    <section class="card">
+        <form method="POST" action="/reset">
+            <label>What should be cleared?</label>
+            <div class="stack" style="gap:8px;margin-bottom:18px">
+                <label class="check reset-option"><input type="checkbox" name="clear" value="tasks" checked>
+                    <span><strong>All tasks</strong> <span class="badge">{{ counts.tasks }}</span><br>
+                    <span class="small muted">Everything on the Tasks page, pending and completed.</span></span></label>
+
+                <label class="check reset-option"><input type="checkbox" name="clear" value="timetable" id="clearTimetable" checked>
+                    <span><strong>All timetable sessions</strong> <span class="badge">{{ counts.timetable }}</span><br>
+                    <span class="small muted">Plan sessions, manual sessions and recurring series.</span></span></label>
+
+                <label class="check reset-option" style="margin-left:28px" id="calendarOption"><input type="checkbox" name="remove_calendar" value="1" checked>
+                    <span><strong>Also remove them from Google Calendar</strong> <span class="badge badge-info">{{ counts.calendar }} events</span><br>
+                    <span class="small muted">Recommended, so old reminders stop popping up.</span></span></label>
+
+                <label class="check reset-option"><input type="checkbox" name="clear" value="plans" checked>
+                    <span><strong>Uploaded syllabuses &amp; study plans</strong> <span class="badge">{{ counts.plans }}</span><br>
+                    <span class="small muted">Subjects, modules, topics and draft plans. Uploaded files and the OCR cache stay, so re-uploading is still instant.</span></span></label>
+
+                <label class="check reset-option"><input type="checkbox" name="clear" value="history">
+                    <span><strong>Study history</strong> <span class="badge">{{ counts.history }}</span><br>
+                    <span class="small muted">Off by default: this history trains the ML models to your study speed.</span></span></label>
+            </div>
+
+            <div class="banner banner-danger">
+                <svg class="icon"><use href="#i-alert"/></svg>
+                <div>
+                    <p class="mb-0">Type <strong>RESET</strong> to confirm. Your study hours (availability) and Google login are kept.</p>
+                    <input type="text" name="confirm_text" placeholder="RESET" autocomplete="off" required style="margin-top:10px;max-width:220px">
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-lg" style="background: var(--danger)"><svg class="icon"><use href="#i-trash"/></svg> Reset now</button>
+                <a href="/" class="btn btn-ghost btn-lg">Cancel</a>
+            </div>
+        </form>
+    </section>
+
+    <aside class="stack">
+        <section class="card">
+            <h3>After the reset</h3>
+            <ol class="steps">
+                <li><span class="step-num">1</span><div><strong>Check your study hours</strong><p><a href="/availability">Study Hours</a> are kept. Adjust them if your routine changed.</p></div></li>
+                <li><span class="step-num">2</span><div><strong>Upload your syllabus</strong><p>Get a fresh plan: <a href="/add-syllabus">Upload syllabus</a>.</p></div></li>
+                <li><span class="step-num">3</span><div><strong>Add new tasks</strong><p>Assignments and practicals: <a href="/add-task">Add task</a>.</p></div></li>
+            </ol>
+        </section>
+        <div class="banner banner-info mb-0">
+            <svg class="icon"><use href="#i-file"/></svg>
+            <div><p>Backups are saved in the <strong>backups</strong> folder inside StudyPlanner. To undo, close the app and copy a backup over <strong>database.db</strong>.</p></div>
+        </div>
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var t = document.getElementById("clearTimetable"), c = document.getElementById("calendarOption");
+    function sync() { c.style.opacity = t.checked ? 1 : .4; c.querySelector("input").disabled = !t.checked; }
+    t.addEventListener("change", sync); sync();
+})();
+</script>
+{% endblock %}

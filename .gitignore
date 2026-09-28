@@ -1,0 +1,12 @@
+# secrets & local data - never commit these
+credentials.json
+token.json
+database.db
+/uploads/
+/ocr_cache/
+.venv/
+venv/
+__pycache__/
+backups/
+backup_before_redesign/
+data/

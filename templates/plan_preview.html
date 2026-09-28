@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% set active_page = 'upload' %}
+{% block title %}Plan Preview · Smart Study Planner{% endblock %}
+
+{% block content %}
+{% set v = plan_data.validation %}
+{% set opts = plan_data.get('options', {}) %}
+
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-sparkles"/></svg> Study plan preview · draft</div>
+        <h1>Your plan to finish by {{ plan_data.deadline }}</h1>
+        <p>Check the breakdown and the day-by-day schedule. Nothing is added to your timetable or Google Calendar until you press <strong>Approve Study Plan</strong>.</p>
+    </div>
+</div>
+
+{% if v.fully_feasible %}
+<div class="banner banner-success">
+    <svg class="icon"><use href="#i-check"/></svg>
+    <div><h3>Everything fits before your deadline</h3><p>{{ v.message }}</p></div>
+</div>
+{% elif v.compressed %}
+<div class="banner banner-warning">
+    <svg class="icon"><use href="#i-alert"/></svg>
+    <div><h3>Tight deadline: plan compressed to {{ v.compression_percent }}%</h3>
+        <p>{{ v.message }} For the full recommended time, finish by <strong>{{ v.recommended_extended_deadline }}</strong> or add more study hours.</p></div>
+</div>
+{% else %}
+<div class="banner banner-danger">
+    <svg class="icon"><use href="#i-alert"/></svg>
+    <div><h3>Not everything fits</h3><p>{{ v.message }}{% if v.recommended_extended_deadline != plan_data.deadline %} A full plan would need until <strong>{{ v.recommended_extended_deadline }}</strong>.{% endif %}</p>
+        {% if v.unscheduled_topics %}<p class="small">Not scheduled: {% for t in v.unscheduled_topics[:6] %}{{ t.topic }} ({{ t.subject }}){% if not loop.last %}, {% endif %}{% endfor %}{% if v.unscheduled_topics|length > 6 %}…{% endif %}</p>{% endif %}
+    </div>
+</div>
+{% endif %}
+
+{% set module_count = namespace(n=0, t=0) %}
+{% for s in tree if s.included %}{% set module_count.n = module_count.n + s.modules|length %}{% set module_count.t = module_count.t + s.topic_count %}{% endfor %}
+
+<section class="grid grid-4" style="margin-bottom:18px">
+    <div class="stat"><div class="stat-icon"><svg class="icon"><use href="#i-book"/></svg></div>
+        <div><p class="stat-label">Subjects</p><p class="stat-value">{{ plan_data.subject_summary|length }}</p></div></div>
+    <div class="stat"><div class="stat-icon blue"><svg class="icon"><use href="#i-layers"/></svg></div>
+        <div><p class="stat-label">Modules · Topics</p><p class="stat-value">{{ module_count.n }}<small> · {{ module_count.t }} topics</small></p></div></div>
+    <div class="stat"><div class="stat-icon green"><svg class="icon"><use href="#i-clock"/></svg></div>
+        <div><p class="stat-label">Hours planned</p><p class="stat-value">{{ plan_data.allocated_hours }}<small> / {{ plan_data.total_predicted_hours }} h needed</small></p></div></div>
+    <div class="stat"><div class="stat-icon amber"><svg class="icon"><use href="#i-target"/></svg></div>
+        <div><p class="stat-label">Sessions · Finish</p><p class="stat-value">{{ plan_data.total_sessions }}<small> · {{ plan_data.end_date }}</small></p></div></div>
+</section>
+
+<details class="card customize" style="margin-bottom:18px">
+    <summary><svg class="icon"><use href="#i-edit"/></svg> Adjust deadline, daily hours or subjects <svg class="icon chev" style="margin-left:auto"><use href="#i-chevron"/></svg></summary>
+    <form method="POST" action="/plan-preview/{{ plan_id }}/regenerate" style="margin-top:14px">
+        <div class="form-row">
+            <div class="field"><label>Finish-by date</label><input type="date" name="deadline" value="{{ plan_data.deadline }}" required></div>
+            <div class="field"><label>Max study hours per day</label><input type="number" name="study_hours" min="0.5" max="24" step="0.5" value="{{ plan.daily_hours }}" required></div>
+        </div>
+        <label>Subjects to include</label>
+        <div class="subject-toggles">
+            {% for s in tree %}
+            <label class="check"><input type="checkbox" name="include" value="{{ s.name }}" {% if s.included %}checked{% endif %}>
+                <span class="dot" style="background: {{ colors[s.name] }}"></span> {{ s.name }}{% if s.is_lab %} <span class="badge">Lab</span>{% endif %}</label>
+            {% endfor %}
+        </div>
+        <button type="submit" class="btn btn-primary"><svg class="icon"><use href="#i-reset"/></svg> Rebuild plan</button>
+        <a href="/availability" class="btn btn-ghost">Edit weekly study hours</a>
+    </form>
+</details>
+
+<div class="tabs" data-tabs="plan">
+    <button class="tab active" type="button" data-target="tab-breakdown">Syllabus breakdown</button>
+    <button class="tab" type="button" data-target="tab-schedule">Day-by-day schedule</button>
+    <button class="tab" type="button" data-target="tab-how">How time is calculated</button>
+</div>
+
+<!-- ================= BREAKDOWN ================= -->
+<section class="tab-panel active" id="tab-breakdown" data-tab-panel="plan">
+    {% for s in tree %}
+    {% set c = colors[s.name] %}
+    <details class="card subject-card {% if not s.included %}is-excluded{% endif %}" style="--c: {{ c }}" {% if loop.first %}open{% endif %}>
+        <summary>
+            <span class="subject-avatar">{{ s.name[:1] }}</span>
+            <div>
+                <p class="subject-title">{{ s.name }} {% if s.is_lab %}<span class="badge">Lab</span>{% endif %} {% if not s.included %}<span class="badge badge-warning">Not in plan</span>{% endif %}</p>
+                <p class="subject-sub">{% if s.code %}{{ s.code }} · {% endif %}{{ s.modules|length }} modules · {{ s.topic_count }} topics · {{ s.allocated }} h planned / {{ s.needed }} h needed</p>
+            </div>
+            <svg class="icon chev"><use href="#i-chevron"/></svg>
+        </summary>
+        <div class="modules">
+            {% for m in s.modules %}
+            <div class="module">
+                <div class="module-head">
+                    <span class="module-num">{{ m.name.split(':')[0].replace('Module ', 'M') }}</span>
+                    <span class="module-title">{{ m.name.split(':', 1)[1] if ':' in m.name else m.name }}</span>
+                    {% if m.syllabus %}<span class="badge">{{ m.syllabus|round(1) }} h in syllabus</span>{% endif %}
+                    <span class="badge badge-primary">{{ m.allocated|round(1) }} h planned</span>
+                </div>
+                <div class="topic-list">
+                    {% for t in m.topics %}
+                    <div class="topic-row">
+                        <div>
+                            <p class="topic-name">{{ t.name }}</p>
+                            {% if t.subtopics %}<p class="topic-subs">{{ t.subtopics[:4]|join(' · ') }}{% if t.subtopics|length > 4 %} · +{{ t.subtopics|length - 4 }} more{% endif %}</p>{% endif %}
+                        </div>
+                        <div class="topic-hours">
+                            <strong>{{ t.allocated|round(1) }} h</strong> · {{ t.sessions }} session{{ 's' if t.sessions != 1 }}
+                            {% if t.first_date %}<div class="small muted">{{ t.first_date[5:] }}{% if t.last_date != t.first_date %} → {{ t.last_date[5:] }}{% endif %}</div>{% endif %}
+                            <div class="progress"><span style="width: {{ [100, (t.allocated / (t.needed or 1) * 100)]|min|round(0) }}%; background: {{ c }}"></span></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endfor %}
+
+    {% if opts.get('skipped_subjects') %}
+    <div class="banner banner-info">
+        <svg class="icon"><use href="#i-file"/></svg>
+        <div><p><strong>Also found:</strong> {{ opts.skipped_subjects|join(', ') }}. These subjects have no module or topic list in the syllabus, so no study sessions were created for them.</p></div>
+    </div>
+    {% endif %}
+</section>
+
+<!-- ================= SCHEDULE ================= -->
+<section class="tab-panel" id="tab-schedule" data-tab-panel="plan">
+    {% if weeks %}
+        {% for w in weeks %}
+        <div class="week">
+            <div class="week-head"><h3>Week of {{ w.start }}</h3><span class="badge badge-primary">{{ w.hours }} h</span></div>
+            <div class="week-days">
+                {% for d in w.days %}
+                <div class="day-col">
+                    <h4><span>{{ d.day[:3] }}, {{ d.date[5:] }}</span><span class="muted">{{ d.hours }} h</span></h4>
+                    {% for s in d.sessions %}
+                    <div class="mini-session" style="--c: {{ colors.get(s.subject, '#5b5bd6') }}">
+                        <div class="t">{{ s.start_time }}–{{ s.end_time }} · {{ s.preferred_period }}</div>
+                        <p class="n">{{ s.topic }}</p>
+                        <div class="s">{{ s.subject }}{% if s.kind == 'revision' %} · Revision{% endif %}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <div class="empty"><svg class="icon"><use href="#i-calendar"/></svg><h3>No sessions could be placed</h3>
+            <p class="mb-0">Add study windows on the <a href="/availability">Study Hours</a> page or choose a later deadline.</p></div>
+    {% endif %}
+</section>
+
+<!-- ================= HOW ================= -->
+<section class="tab-panel" id="tab-how" data-tab-panel="plan">
+    <div class="grid grid-2">
+        <div class="card">
+            <h3>Hours per topic</h3>
+            <p class="muted">Each module's syllabus hours are shared between its topics by how much content each topic has. The result is adjusted by a difficulty score, then blended with the <strong>Linear Regression (ML)</strong> estimate (60% syllabus, 40% ML). Lab work counts at 60%, because part of the practice happens in college.</p>
+            <h3>Fitting the deadline</h3>
+            <p class="muted mb-0">Sessions last 30–90 minutes, with 15-minute breaks, and are placed only inside your study windows. If the full time doesn't fit, every topic is shortened by the same percentage (never below 50%), so every topic still gets time before the deadline.</p>
+        </div>
+        <div class="card">
+            <h3>Preferred time of day</h3>
+            <p class="muted">A <strong>Decision Tree (ML)</strong> suggests Morning, Afternoon, Evening or Night for each topic. This is only a preference and never overrides your availability. Subjects rotate, so you don't study one subject all day.</p>
+            <h3>Validation checks</h3>
+            <div class="checks-list">
+                {% for key, ok in plan_data.get('checks', {}).items() if key != 'passed' %}
+                <span class="badge {{ 'badge-success' if ok else 'badge-danger' }}">{{ '✓' if ok else '✗' }} {{ key.replace('_', ' ') }}</span>
+                {% endfor %}
+            </div>
+            <p class="small muted" style="margin-top:12px">Weekly availability: {{ plan_data.student_capacity_hours }} h/day on average · daily limit {{ plan.daily_hours }} h.</p>
+        </div>
+    </div>
+</section>
+
+<form method="POST" action="/approve-plan/{{ plan_id }}" class="sticky-approve"
+      data-confirm="Add {{ plan_data.total_sessions }} sessions to your timetable{% if calendar_enabled %} and Google Calendar{% endif %}?">
+    <p><strong>{{ plan_data.total_sessions }} sessions</strong> · {{ plan_data.start_date }} → {{ plan_data.end_date }}{% if calendar_enabled %} · each synced with a 10-minute Google Calendar reminder{% endif %}</p>
+    <button type="submit" class="btn btn-success btn-lg" {% if not plan_data.total_sessions %}disabled{% endif %}>
+        <svg class="icon"><use href="#i-check"/></svg> Approve Study Plan{% if calendar_enabled %} &amp; Sync Calendar{% endif %}
+    </button>
+</form>
+{% endblock %}

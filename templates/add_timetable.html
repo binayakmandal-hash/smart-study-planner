@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set active_page = 'timetable' %}
+{% block title %}Add Session · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-plus"/></svg> New session</div>
+        <h1>Add Study Session</h1>
+        <p>Add a one-time, daily or weekly session. With the reminder on, it also goes to Google Calendar with a 10-minute pop-up.</p>
+    </div>
+</div>
+
+<section class="card form-card">
+    <form method="POST">
+        {% include "_session_form.html" %}
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary"><svg class="icon"><use href="#i-check"/></svg> Save Study Session</button>
+            <a href="/timetable" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

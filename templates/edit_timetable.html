@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% set active_page = 'timetable' %}
+{% block title %}Edit Session · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-edit"/></svg> Edit session</div>
+        <h1>Edit Study Session</h1>
+        <p>Changes are also updated in Google Calendar.</p>
+    </div>
+</div>
+
+<section class="card form-card">
+    <form method="POST">
+        {% include "_session_form.html" %}
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary"><svg class="icon"><use href="#i-check"/></svg> Update Study Session</button>
+            <a href="/timetable" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

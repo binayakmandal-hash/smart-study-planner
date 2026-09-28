@@ -1,0 +1,15 @@
+Flask>=3.0.0
+google-api-python-client>=2.100.0
+google-auth>=2.20.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.2.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+scipy>=1.12.0
+pymupdf>=1.24.0
+pdfplumber>=0.10.0
+easyocr>=1.7.0
+pillow>=10.0.0
+pytesseract>=0.3.10
+# Fast CPU OCR for scanned syllabi (recommended; EasyOCR/Tesseract are used if it is missing)
+rapidocr-onnxruntime

@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% set active_page = 'tasks' %}
+{% block title %}Add Task · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-plus"/></svg> New task</div>
+        <h1>Add Study Task</h1>
+        <p>Create a task for an assignment, practical or anything you need to finish.</p>
+    </div>
+</div>
+
+<section class="card form-card">
+    <form method="POST">
+        <div class="field"><label>Subject</label><input type="text" name="subject" placeholder="e.g. PHP with MySQL" required></div>
+        <div class="field"><label>Task</label><input type="text" name="task" placeholder="e.g. Finish CRUD practical" required></div>
+        <div class="form-row">
+            <div class="field"><label>Deadline</label><input type="date" name="deadline" required></div>
+            <div class="field"><label>Priority</label>
+                <select name="priority" required>
+                    <option value="">Select priority</option>
+                    <option value="High">High</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Low">Low</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary"><svg class="icon"><use href="#i-plus"/></svg> Add Task</button>
+            <a href="/tasks" class="btn btn-ghost">Cancel</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

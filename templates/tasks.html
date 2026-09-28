@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% set active_page = 'tasks' %}
+{% block title %}My Tasks · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-check-list"/></svg> Tasks</div>
+        <h1>My Study Tasks</h1>
+        <p>Assignments, practicals and to-dos with deadlines and priorities.</p>
+    </div>
+    <div class="page-actions"><a href="/reset" class="btn btn-danger"><svg class="icon"><use href="#i-reset"/></svg> Reset</a><a href="/add-task" class="btn btn-primary"><svg class="icon"><use href="#i-plus"/></svg> Add task</a></div>
+</div>
+
+<section class="filters">
+    <input type="text" id="searchInput" placeholder="Search tasks or subjects…" autocomplete="off">
+    <select id="priorityFilter">
+        <option value="All">All priorities</option>
+        <option value="High">High</option>
+        <option value="Medium">Medium</option>
+        <option value="Low">Low</option>
+    </select>
+    <select id="statusFilter">
+        <option value="All">All status</option>
+        <option value="Pending">Pending</option>
+        <option value="Completed">Completed</option>
+    </select>
+</section>
+
+<section class="table-wrap">
+    <table>
+        <thead>
+            <tr><th>Subject</th><th>Task</th><th>Deadline</th><th>Priority</th><th>Status</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="taskTableBody">
+            {% for task in tasks %}
+            <tr class="task-row"
+                data-subject="{{ task['subject']|lower }}" data-task="{{ task['task']|lower }}"
+                data-priority="{{ task['priority'] }}" data-status="{{ task['status'] }}">
+                <td><strong>{{ task["subject"] }}</strong></td>
+                <td>{{ task["task"] }}</td>
+                <td class="nowrap">{{ task["deadline"] }}</td>
+                <td>
+                    {% if task["priority"] == "High" %}<span class="priority high">High</span>
+                    {% elif task["priority"] == "Medium" %}<span class="priority medium">Medium</span>
+                    {% else %}<span class="priority low">Low</span>{% endif %}
+                </td>
+                <td>
+                    {% if task["status"] == "Completed" %}<span class="status completed">✓ Completed</span>
+                    {% else %}<span class="status pending">Pending</span>{% endif %}
+                </td>
+                <td>
+                    <div class="actions">
+                        {% if task["status"] != "Completed" %}
+                        <form method="POST" action="/complete/{{ task['id'] }}"><button type="submit" class="action-complete">✓ Complete</button></form>
+                        {% endif %}
+                        <form method="POST" action="/delete/{{ task['id'] }}" data-confirm="Delete this task?"><button type="submit" class="action-delete">Delete</button></form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if not tasks %}
+    <div class="empty" style="margin:16px"><svg class="icon"><use href="#i-check-list"/></svg><h3>No tasks yet</h3><p class="mb-0"><a href="/add-task">Add your first task</a></p></div>
+    {% endif %}
+    <div id="noTasksMessage" style="display:none;text-align:center;padding:25px" class="muted">No matching tasks found.</div>
+</section>
+{% endblock %}

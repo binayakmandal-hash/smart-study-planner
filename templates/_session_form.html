@@ -1,0 +1,69 @@
+{# Shared fields for add / edit timetable.  `session` is only defined on the edit page. #}
+{% set s = session if session is defined else none %}
+{% set stype = s['schedule_type'] if s else 'one-time' %}
+
+<div class="field"><label>Subject</label>
+    <input type="text" name="subject" placeholder="e.g. Object Oriented Programming with Java" value="{{ s['subject'] if s else '' }}" required></div>
+<div class="field"><label>Topic</label>
+    <input type="text" name="topic" placeholder="e.g. Constructors & constructor chaining" value="{{ s['topic'] if s else '' }}" required></div>
+
+<div class="field">
+    <label>Repeat</label>
+    <input type="hidden" name="schedule_type" id="schedule_type" value="{{ stype }}">
+    <div class="segmented" role="radiogroup">
+        <input type="radio" id="st-one" name="_st" value="one-time" {% if stype == 'one-time' %}checked{% endif %}><label for="st-one">One time</label>
+        <input type="radio" id="st-daily" name="_st" value="daily" {% if stype == 'daily' %}checked{% endif %}><label for="st-daily">Every day</label>
+        <input type="radio" id="st-weekly" name="_st" value="weekly" {% if stype == 'weekly' %}checked{% endif %}><label for="st-weekly">Every week</label>
+    </div>
+</div>
+
+<div id="one-time-fields" class="field">
+    <label>Date</label>
+    <input type="date" name="date" value="{{ (s['date'] or '') if s else '' }}">
+</div>
+
+<div id="daily-fields" class="form-row" style="display:none">
+    <div class="field"><label>Starting date</label><input type="date" name="daily_start_date" value="{{ (s['start_date'] or s['date'] or '') if s else '' }}"></div>
+    <div class="field"><label>Ending date</label><input type="date" name="daily_end_date" value="{{ (s['end_date'] or '') if s else '' }}"></div>
+</div>
+
+<div id="weekly-fields" style="display:none">
+    <div class="field"><label>Day</label>
+        <select name="day">
+            <option value="">Select day</option>
+            {% for d in ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'] %}
+            <option value="{{ d }}" {% if s and s['day'] == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="form-row">
+        <div class="field"><label>Starting date</label><input type="date" name="weekly_start_date" value="{{ (s['start_date'] or s['date'] or '') if s else '' }}"></div>
+        <div class="field"><label>Ending date</label><input type="date" name="weekly_end_date" value="{{ (s['end_date'] or '') if s else '' }}"></div>
+    </div>
+</div>
+
+<div class="form-row">
+    <div class="field"><label>Start time</label><input type="time" name="start_time" value="{{ s['start_time'] if s else '' }}" required></div>
+    <div class="field"><label>End time</label><input type="time" name="end_time" value="{{ s['end_time'] if s else '' }}" required></div>
+</div>
+
+<div class="field">
+    <label class="check"><input type="checkbox" name="alarm" {% if not s or s['alarm'] == 1 %}checked{% endif %}>
+        <svg class="icon"><use href="#i-bell"/></svg> Reminder (Google Calendar pop-up 10 min before)</label>
+</div>
+
+<script>
+function showScheduleFields() {
+    var type = document.getElementById("schedule_type").value;
+    document.getElementById("one-time-fields").style.display = type === "one-time" ? "block" : "none";
+    document.getElementById("daily-fields").style.display = type === "daily" ? "grid" : "none";
+    document.getElementById("weekly-fields").style.display = type === "weekly" ? "block" : "none";
+}
+document.querySelectorAll("input[name='_st']").forEach(function (radio) {
+    radio.addEventListener("change", function () {
+        document.getElementById("schedule_type").value = radio.value;
+        showScheduleFields();
+    });
+});
+showScheduleFields();
+</script>

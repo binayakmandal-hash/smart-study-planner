@@ -1,0 +1,13 @@
+# Lightweight requirements for the Render deployment (no PyTorch / EasyOCR).
+Flask>=3.0.0
+gunicorn>=22.0.0
+google-api-python-client>=2.100.0
+google-auth>=2.20.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.2.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+scipy>=1.12.0
+pymupdf>=1.24.0
+pillow>=10.0.0
+rapidocr-onnxruntime

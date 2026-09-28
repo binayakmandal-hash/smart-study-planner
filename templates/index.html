@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% set active_page = 'home' %}
+{% block title %}Dashboard · Smart Study Planner{% endblock %}
+
+{% macro session_card(s, done=False, show_date=False) -%}
+{% set c = colors.get(s['subject'], '#5b5bd6') %}
+<div class="session {% if done %}is-done{% endif %}" style="--c: {{ c }}"
+     data-id="{{ s['id'] }}" data-date="{{ today }}" data-start="{{ s['start_time'] }}" data-end="{{ s['end_time'] }}"
+     data-alarm="{{ s['alarm'] }}" data-topic="{{ s['topic'] }}" data-subject="{{ s['subject'] }}">
+    <div class="session-time">{{ s['start_time'] }}<small>to {{ s['end_time'] }}</small></div>
+    <div class="session-body">
+        <p class="session-subject">{{ s['subject'] }}</p>
+        <p class="session-topic">{{ s['topic'] }}</p>
+        {% if s['notes'] %}<p class="session-covers">{{ s['notes'] }}</p>{% endif %}
+    </div>
+    <div class="session-actions">
+        {% if not done %}
+        <form method="POST" action="/complete-session/{{ s['id'] }}">
+            <input type="hidden" name="study_date" value="{{ today }}">
+            <input type="hidden" name="next" value="/">
+            <button type="submit" class="btn btn-sm btn-success" title="Mark as studied">
+                <svg class="icon"><use href="#i-check"/></svg> Done
+            </button>
+        </form>
+        {% else %}
+        <span class="badge badge-success"><svg class="icon" style="width:14px;height:14px"><use href="#i-check"/></svg> Studied</span>
+        {% endif %}
+    </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+
+<section class="hero-card">
+    <div style="position:relative;z-index:1">
+        <div class="hero-date">{{ now_label }}</div>
+        <h1>{% if hour < 12 %}Good morning{% elif hour < 17 %}Good afternoon{% else %}Good evening{% endif %} 👋</h1>
+        <p>
+            {% if today_sessions %}
+                You have <strong>{{ today_sessions|length }}</strong> study session{{ 's' if today_sessions|length != 1 }} left today. One step at a time — you've got this.
+            {% elif done_today %}
+                All of today's sessions are done. Great work — rest or get ahead!
+            {% else %}
+                No sessions today. Upload your syllabus and Smart Study Planner will build a full plan for every subject.
+            {% endif %}
+        </p>
+        <div class="hero-actions">
+            {% if latest_draft %}
+            <a href="/plan-preview/{{ latest_draft['id'] }}" class="btn btn-white"><svg class="icon"><use href="#i-sparkles"/></svg> Review draft plan</a>
+            {% else %}
+            <a href="/add-syllabus" class="btn btn-white"><svg class="icon"><use href="#i-upload"/></svg> Upload syllabus</a>
+            {% endif %}
+            <a href="/timetable" class="btn btn-glass"><svg class="icon"><use href="#i-calendar"/></svg> Open timetable</a>
+        </div>
+    </div>
+    <div class="countdown" title="{{ exam_date or '' }}">
+        {% if exam_days is not none %}
+            <div><strong>{{ exam_days }}</strong><span>day{{ 's' if exam_days != 1 }} to deadline</span></div>
+        {% else %}
+            <div><strong>{{ streak }}</strong><span>day streak 🔥</span></div>
+        {% endif %}
+    </div>
+</section>
+
+<section class="grid grid-4" style="margin-bottom:20px">
+    <div class="stat">
+        <div class="stat-icon green"><svg class="icon"><use href="#i-clock"/></svg></div>
+        <div><p class="stat-label">Hours Studied</p><p class="stat-value">{{ hours_studied or 0 }}<small> h</small></p></div>
+    </div>
+    <div class="stat">
+        <div class="stat-icon amber"><svg class="icon"><use href="#i-target"/></svg></div>
+        <div><p class="stat-label">Hours Planned Ahead</p><p class="stat-value">{{ hours_remaining or 0 }}<small> h</small></p></div>
+    </div>
+    <div class="stat">
+        <div class="stat-icon red"><svg class="icon"><use href="#i-flame"/></svg></div>
+        <div><p class="stat-label">Study Streak</p><p class="stat-value">{{ streak }}<small> day{{ 's' if streak != 1 }}</small></p></div>
+    </div>
+    <div class="stat">
+        <div class="stat-icon blue"><svg class="icon"><use href="#i-check-list"/></svg></div>
+        <div><p class="stat-label">Total Tasks</p><p class="stat-value">{{ completed_tasks }}<small> / {{ total_tasks }} done</small></p></div>
+    </div>
+</section>
+
+<div class="grid grid-main">
+    <div class="stack">
+        <section class="card">
+            <div class="card-head">
+                <h2><svg class="icon"><use href="#i-target"/></svg> Today's focus</h2>
+                <a href="/add-timetable" class="btn btn-sm btn-ghost"><svg class="icon"><use href="#i-plus"/></svg> Add session</a>
+            </div>
+            {% if today_sessions or done_today %}
+            <div class="timeline">
+                {% for s in today_sessions %}{{ session_card(s) }}{% endfor %}
+                {% for s in done_today %}{{ session_card(s, done=True) }}{% endfor %}
+            </div>
+            {% else %}
+            <div class="empty">
+                <svg class="icon"><use href="#i-sparkles"/></svg>
+                <h3>Nothing scheduled today</h3>
+                <p class="mb-0">Upload your syllabus to get a complete, deadline-aware plan.</p>
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head">
+                <h2><svg class="icon"><use href="#i-calendar"/></svg> Coming up this week</h2>
+                <a href="/timetable" class="small">See all</a>
+            </div>
+            {% if upcoming %}
+            <div class="timeline">
+                {% for occ in upcoming %}
+                {% set s = occ.session %}
+                <div class="session" style="--c: {{ colors.get(s['subject'], '#5b5bd6') }}">
+                    <div class="session-time">{{ s['start_time'] }}<small>{{ occ.date[5:] }}</small></div>
+                    <div class="session-body">
+                        <p class="session-subject">{{ s['subject'] }}</p>
+                        <p class="session-topic">{{ s['topic'] }}</p>
+                    </div>
+                    <div class="session-actions"><span class="badge">{{ s['start_time'] }}–{{ s['end_time'] }}</span></div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="muted mb-0">No sessions in the next 7 days.</p>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="stack">
+        <section class="card focus-timer" id="focusTimer">
+            <div class="card-head" style="justify-content:center"><h2><svg class="icon"><use href="#i-clock"/></svg> Focus timer</h2></div>
+            <div class="timer-modes">
+                <button type="button" class="active" data-minutes="25" data-label="Focus">Focus 25</button>
+                <button type="button" data-minutes="50" data-label="Focus">Deep 50</button>
+                <button type="button" data-minutes="5" data-label="Break">Break 5</button>
+            </div>
+            <div class="timer-ring">
+                <svg viewBox="0 0 168 168"><circle class="track" cx="84" cy="84" r="70"/><circle class="value" cx="84" cy="84" r="70"/></svg>
+                <div class="timer-display"><strong data-time>25:00</strong><span data-mode-label>Focus</span></div>
+            </div>
+            <div class="timer-controls">
+                <button type="button" class="btn btn-primary no-disable" data-start>Start</button>
+                <button type="button" class="btn btn-ghost no-disable" data-reset><svg class="icon"><use href="#i-reset"/></svg></button>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h2><svg class="icon"><use href="#i-layers"/></svg> Subject progress</h2></div>
+            {% if subject_progress %}
+                {% for p in subject_progress %}
+                <div class="subject-row">
+                    <div class="subject-row-name"><span class="dot" style="background: {{ p.color }}"></span><span>{{ p.subject }}</span></div>
+                    <span class="small muted nowrap">{{ p.done }}/{{ p.total }} · {{ p.percent }}%</span>
+                    <div class="progress"><span style="width: {{ p.percent }}%; background: {{ p.color }}"></span></div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="muted mb-0">Progress appears here once you approve a study plan.</p>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head"><h2><svg class="icon"><use href="#i-chart"/></svg> Last 7 days</h2><span class="small muted">{{ completed_topics }}/{{ total_topics }} topics</span></div>
+            <div class="bars">
+                {% for d in week_hours %}
+                <div class="bar {% if d.is_today %}is-today{% endif %}" title="{{ d.hours }} h">
+                    <span class="bar-value">{{ d.hours if d.hours else '' }}</span>
+                    <div class="bar-fill" style="height: {{ (d.hours / max_week * 100)|round(0) }}%"></div>
+                    <span class="bar-label">{{ d.label }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-head">
+                <h2><svg class="icon"><use href="#i-check-list"/></svg> Tasks</h2>
+                <a href="/add-task" class="btn btn-sm btn-soft"><svg class="icon"><use href="#i-plus"/></svg> Add</a>
+            </div>
+            <p class="small muted">{{ pending_tasks }} pending · {{ completed_tasks }} completed · {{ overdue_tasks|length }} overdue</p>
+            {% if upcoming_tasks %}
+                {% for t in upcoming_tasks %}
+                <div class="subject-row">
+                    <div class="subject-row-name">
+                        <span class="dot" style="background: {{ 'var(--danger)' if t['priority'] == 'High' else ('var(--warning)' if t['priority'] == 'Medium' else 'var(--success)') }}"></span>
+                        <span>{{ t['task'] }}</span>
+                    </div>
+                    <span class="badge {% if t['deadline'] < today %}badge-danger{% elif t['deadline'] == today %}badge-warning{% endif %}">{{ t['deadline'] }}</span>
+                </div>
+                {% endfor %}
+            {% else %}
+                <p class="muted mb-0">No pending tasks. 🎉</p>
+            {% endif %}
+        </section>
+    </div>
+</div>
+{% endblock %}

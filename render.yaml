@@ -1,0 +1,13 @@
+# Render Blueprint: New + > Blueprint > pick this repo
+services:
+  - type: web
+    name: smart-study-planner
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: STUDYPLANNER_DEMO
+        value: "1"

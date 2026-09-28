@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% set active_page = 'upload' %}
+{% block title %}Reading syllabus… · Smart Study Planner{% endblock %}
+
+{% block content %}
+<section class="card processing-card" id="jobCard" data-job="{{ job_id }}">
+    <div class="pulse-orb"><svg class="icon"><use href="#i-book"/></svg></div>
+    <h1 id="jobTitle">Reading your syllabus</h1>
+    <p class="muted" id="jobFile">{{ job.filename }}</p>
+
+    <div class="big-progress"><span id="jobBar"></span></div>
+    <p class="small" id="jobMessage">Starting…</p>
+
+    <div class="stage-list">
+        <div class="stage is-active" data-stage="read"><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span> Reading every page (OCR)</div>
+        <div class="stage" data-stage="parse"><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span> Finding subjects, modules &amp; topics</div>
+        <div class="stage" data-stage="plan"><span class="tick"><svg class="icon"><use href="#i-check"/></svg></span> Allocating study time before your deadline</div>
+    </div>
+
+    <div id="jobError" class="banner banner-danger" style="display:none;margin-top:20px;text-align:left">
+        <svg class="icon"><use href="#i-alert"/></svg>
+        <div><h3>Syllabus processing failed</h3><p id="jobErrorText"></p>
+            <a href="/add-syllabus" class="btn btn-sm btn-primary" style="margin-top:10px">Try again</a></div>
+    </div>
+    <p class="small muted" style="margin-top:18px">You can keep this tab open. It moves on by itself when your plan is ready.</p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var card = document.getElementById("jobCard");
+    var id = card.dataset.job;
+    var bar = document.getElementById("jobBar");
+    var msg = document.getElementById("jobMessage");
+    var started = Date.now();
+
+    function stage(name, state) {
+        var el = document.querySelector('[data-stage="' + name + '"]');
+        if (!el) return;
+        el.classList.remove("is-active", "is-done");
+        if (state) el.classList.add(state);
+    }
+
+    function poll() {
+        fetch("/api/processing/" + id, { cache: "no-store" })
+            .then(function (r) { return r.json(); })
+            .then(function (job) {
+                if (job.status === "missing") { msg.textContent = "Job not found. Please upload again."; return; }
+                var pct = job.total ? Math.round(100 * job.done / job.total) : 3;
+                if (job.status === "done") pct = 100;
+                bar.style.width = Math.max(3, Math.min(100, pct * 0.9 + (job.done >= job.total && job.total ? 10 : 0))) + "%";
+                var secs = Math.round((Date.now() - started) / 1000);
+                msg.textContent = (job.total ? ("Page " + job.done + " of " + job.total + " · ") : "") + (job.message || "") + " · " + secs + "s";
+
+                if (job.total && job.done >= job.total) { stage("read", "is-done"); stage("parse", "is-active"); }
+                if (job.message && job.message.indexOf("plan") !== -1) { stage("parse", "is-done"); stage("plan", "is-active"); }
+
+                if (job.status === "done") {
+                    stage("read", "is-done"); stage("parse", "is-done"); stage("plan", "is-done");
+                    document.getElementById("jobTitle").textContent = "Your plan is ready!";
+                    setTimeout(function () { window.location = job.redirect; }, 600);
+                    return;
+                }
+                if (job.status === "error") {
+                    document.getElementById("jobError").style.display = "flex";
+                    document.getElementById("jobErrorText").textContent = job.error || "Please try again.";
+                    document.getElementById("jobTitle").textContent = "Something went wrong";
+                    return;
+                }
+                setTimeout(poll, 1200);
+            })
+            .catch(function () { setTimeout(poll, 2500); });
+    }
+    poll();
+})();
+</script>
+{% endblock %}

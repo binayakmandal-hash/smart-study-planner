@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% set active_page = 'timetable' %}
+{% block title %}Study Timetable · Smart Study Planner{% endblock %}
+
+{% macro session_row(s, date, allow_done=True) -%}
+{% set c = colors.get(s['subject'], '#5b5bd6') %}
+{% set done = s['status'] == 'Completed' %}
+<div class="session {% if done %}is-done{% endif %}" style="--c: {{ c }}"
+     data-id="{{ s['id'] }}" data-date="{{ date }}" data-start="{{ s['start_time'] }}" data-end="{{ s['end_time'] }}"
+     data-alarm="{{ s['alarm'] }}" data-topic="{{ s['topic'] }}" data-subject="{{ s['subject'] }}">
+    <div class="session-time">{{ s['start_time'] }}<small>to {{ s['end_time'] }}</small></div>
+    <div class="session-body">
+        <p class="session-subject">{{ s['subject'] }}</p>
+        <p class="session-topic">{{ s['topic'] }}</p>
+        {% if s['notes'] %}<p class="session-covers">{{ s['notes'] }}</p>{% endif %}
+        <div class="session-meta">
+            {% if s['alarm'] == 1 %}<span class="badge"><svg class="icon" style="width:13px;height:13px"><use href="#i-bell"/></svg> Reminder</span>{% endif %}
+            {% if s['google_event_id'] %}<span class="badge badge-info">Google Calendar</span>{% endif %}
+            {% if done %}<span class="badge badge-success">Studied</span>{% endif %}
+        </div>
+    </div>
+    <div class="session-actions">
+        {% if allow_done and not done %}
+        <form method="POST" action="/complete-session/{{ s['id'] }}">
+            <input type="hidden" name="study_date" value="{{ date }}">
+            <input type="hidden" name="next" value="/timetable">
+            <button type="submit" class="btn btn-sm btn-success" title="Mark as studied"><svg class="icon"><use href="#i-check"/></svg></button>
+        </form>
+        {% endif %}
+        <a href="/edit-timetable/{{ s['id'] }}" class="btn btn-sm btn-ghost" title="Edit"><svg class="icon"><use href="#i-edit"/></svg></a>
+        <form method="POST" action="/delete-timetable/{{ s['id'] }}" data-confirm="Delete this study session?">
+            <input type="hidden" name="delete_mode" value="all">
+            <button type="submit" class="btn btn-sm btn-danger" title="Delete"><svg class="icon"><use href="#i-trash"/></svg></button>
+        </form>
+    </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-calendar"/></svg> Timetable</div>
+        <h1>Study Timetable</h1>
+        <p>{{ total_upcoming }} upcoming session{{ 's' if total_upcoming != 1 }}. Tick a session when you finish it. This logs your study time and helps the ML model learn your pace.</p>
+    </div>
+    <div class="page-actions">
+        <a href="/add-timetable" class="btn btn-primary"><svg class="icon"><use href="#i-plus"/></svg> Add session</a>
+    </div>
+</div>
+
+<section class="card" style="margin-bottom:20px">
+    <div class="card-head"><h2><svg class="icon"><use href="#i-target"/></svg> Today · {{ today }}</h2>
+        <span class="badge badge-primary">{{ today_sessions|length }} session{{ 's' if today_sessions|length != 1 }}</span></div>
+    {% if today_sessions %}
+        <div class="timeline">{% for s in today_sessions %}{{ session_row(s, today, allow_done=True) }}{% endfor %}</div>
+    {% else %}
+        <p class="muted mb-0">🎉 No study sessions scheduled for today.</p>
+    {% endif %}
+</section>
+
+<div class="tabs" data-tabs="tt">
+    <button class="tab active" type="button" data-target="tt-upcoming">Upcoming</button>
+    <button class="tab" type="button" data-target="tt-recurring">Recurring ({{ recurring|length }})</button>
+    <button class="tab" type="button" data-target="tt-past">Past</button>
+    <button class="tab" type="button" data-target="tt-manage">Manage subjects</button>
+</div>
+
+<section class="tab-panel active" id="tt-upcoming" data-tab-panel="tt">
+    {% if upcoming_days %}
+        {% for d in upcoming_days %}
+        {% if not d.is_today %}
+        <div class="day-group">
+            <div class="day-head"><h3>{{ d.label }}</h3><span class="muted small">{{ d.relative }}</span>
+                <span class="badge">{{ d.sessions|length }} session{{ 's' if d.sessions|length != 1 }}</span></div>
+            <div class="timeline">{% for s in d.sessions %}{{ session_row(s, d.date, allow_done=True) }}{% endfor %}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    {% else %}
+        <div class="empty"><svg class="icon"><use href="#i-calendar"/></svg><h3>No upcoming one-time sessions</h3>
+            <p class="mb-0"><a href="/add-syllabus">Upload a syllabus</a> to generate a full plan, or add a session by hand.</p></div>
+    {% endif %}
+</section>
+
+<section class="tab-panel" id="tt-recurring" data-tab-panel="tt">
+    {% if recurring %}
+    <div class="grid grid-2">
+        {% for item in recurring %}
+        {% set session = item["session"] %}
+        <div class="card" style="--c: {{ colors.get(session['subject'], '#5b5bd6') }}">
+            <div class="card-head">
+                <h3><span class="dot" style="background: var(--c)"></span> {{ session["subject"] }}</h3>
+                <span class="badge badge-primary">{% if session['schedule_type'] == 'daily' %}Every day{% else %}Every {{ session['day'] }}{% endif %}</span>
+            </div>
+            <p class="session-topic">{{ session["topic"] }}</p>
+            <p class="small muted">{{ session["start_time"] }}–{{ session["end_time"] }} · {{ session["start_date"] }} → {{ session["end_date"] }}
+                {% if session["alarm"] == 1 %} · 🔔 reminder{% endif %}</p>
+
+            <label class="small">Occurrence</label>
+            <select class="occurrence-select" data-id="{{ session['id'] }}">
+                {% for occurrence in item["visible_dates"] %}
+                <option value="{{ occurrence }}" {% if occurrence >= today and (loop.first or item['visible_dates'][loop.index0 - 1] < today) %}selected{% endif %}>{{ occurrence }}</option>
+                {% endfor %}
+            </select>
+
+            <div class="form-actions" style="margin-top:12px">
+                <a href="/edit-timetable/{{ session['id'] }}" class="btn btn-sm btn-ghost"><svg class="icon"><use href="#i-edit"/></svg> Edit</a>
+                <button type="button" class="btn btn-sm btn-danger recurring-delete" data-id="{{ session['id'] }}"><svg class="icon"><use href="#i-trash"/></svg> Delete…</button>
+            </div>
+
+            <div class="delete-options" data-options-id="{{ session['id'] }}">
+                <form method="POST" action="/delete-timetable/{{ session['id'] }}">
+                    <input type="hidden" name="occurrence_date" class="occurrence-hidden">
+                    <button type="submit" name="delete_mode" value="this" class="btn btn-sm btn-soft no-disable">This event</button>
+                    <button type="submit" name="delete_mode" value="following" class="btn btn-sm btn-soft no-disable">This &amp; following</button>
+                    <button type="submit" name="delete_mode" value="all" class="btn btn-sm btn-danger no-disable">Whole series</button>
+                    <button type="button" class="btn btn-sm btn-ghost cancel-delete">Cancel</button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+        <div class="empty"><svg class="icon"><use href="#i-reset"/></svg><h3>No recurring sessions</h3>
+            <p class="mb-0">Create daily or weekly sessions from <a href="/add-timetable">Add session</a>.</p></div>
+    {% endif %}
+</section>
+
+<section class="tab-panel" id="tt-past" data-tab-panel="tt">
+    {% if past_days %}
+        {% for d in past_days[:30] %}
+        <div class="day-group">
+            <div class="day-head"><h3>{{ d.label }}</h3><span class="badge">{{ d.sessions|length }}</span></div>
+            <div class="timeline">{% for s in d.sessions %}{{ session_row(s, d.date, allow_done=True) }}{% endfor %}</div>
+        </div>
+        {% endfor %}
+    {% else %}
+        <p class="muted">No past sessions yet.</p>
+    {% endif %}
+</section>
+<section class="tab-panel" id="tt-manage" data-tab-panel="tt">
+    <p class="muted">Remove all upcoming sessions for a subject, for example old test sessions or a subject you have dropped. Their Google Calendar events are removed too.</p>
+    {% if subject_counts %}
+    <div class="table-wrap">
+        <table>
+            <thead><tr><th>Subject</th><th>Upcoming sessions</th><th></th></tr></thead>
+            <tbody>
+            {% for name, count in subject_counts %}
+            <tr>
+                <td><span class="subject-chip"><span class="dot" style="background: {{ colors.get(name, '#5b5bd6') }}"></span>{{ name }}</span></td>
+                <td>{{ count }}</td>
+                <td style="text-align:right">
+                    <form method="POST" action="/timetable/delete-subject" data-confirm="Delete all {{ count }} upcoming sessions of {{ name }}?">
+                        <input type="hidden" name="subject" value="{{ name }}">
+                        <input type="hidden" name="scope" value="upcoming">
+                        <button type="submit" class="btn btn-sm btn-danger"><svg class="icon"><use href="#i-trash"/></svg> Delete upcoming</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}<p class="muted">No upcoming sessions.</p>{% endif %}
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll(".recurring-delete").forEach(function (button) {
+        button.addEventListener("click", function () {
+            var card = button.closest(".card");
+            card.querySelector(".occurrence-hidden").value = card.querySelector(".occurrence-select").value;
+            card.querySelector(".delete-options").style.display = "block";
+        });
+    });
+    document.querySelectorAll(".cancel-delete").forEach(function (button) {
+        button.addEventListener("click", function () { button.closest(".delete-options").style.display = "none"; });
+    });
+});
+</script>
+{% endblock %}

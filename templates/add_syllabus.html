@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% set active_page = 'upload' %}
+{% block title %}Upload Syllabus · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-sparkles"/></svg> AI syllabus reader</div>
+        <h1>Upload your complete syllabus</h1>
+        <p>One PDF or photo with all your subjects. Every page is read, and each subject is split into its modules and topics, with study time given to each before your deadline.</p>
+    </div>
+</div>
+
+<div class="grid grid-main">
+    <section class="card">
+        {% if error_msg %}
+        <div class="banner banner-danger">
+            <svg class="icon"><use href="#i-alert"/></svg>
+            <div><h3>We couldn't use that file</h3><p>{{ error_msg }}</p></div>
+        </div>
+        {% endif %}
+
+        <form method="POST" enctype="multipart/form-data" id="syllabusForm">
+            <label class="dropzone" for="syllabusFile">
+                <input type="file" id="syllabusFile" name="syllabus" accept=".pdf,.png,.jpg,.jpeg" required>
+                <span class="drop-icon"><svg class="icon"><use href="#i-upload"/></svg></span>
+                <strong>Drop your syllabus here or click to browse</strong>
+                <span class="small muted">PDF, PNG or JPG · scanned files are fine · up to 25 MB</span>
+                <span class="file-name"><svg class="icon"><use href="#i-file"/></svg><span></span></span>
+            </label>
+
+            <div class="form-row">
+                <div class="field">
+                    <label for="deadline">Exam / finish-by date</label>
+                    <input type="date" id="deadline" name="deadline" required>
+                    <div class="field-hint">The plan finishes the day before this date.</div>
+                </div>
+                <div class="field">
+                    <label for="study_hours">Max study hours per day</label>
+                    <input type="number" id="study_hours" name="study_hours" min="0.5" max="24" step="0.5" value="3" required>
+                    <div class="field-hint">
+                        {% if capacity %}Your study windows give about <strong>{{ capacity }} h/day</strong> on average.{% endif %}
+                        <a href="/availability">Edit study hours</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary btn-lg">
+                    <svg class="icon"><use href="#i-sparkles"/></svg> Analyse &amp; build my plan
+                </button>
+                <a href="/" class="btn btn-ghost btn-lg">Cancel</a>
+            </div>
+        </form>
+    </section>
+
+    <aside class="stack">
+        {% if sample_available %}
+        <section class="card">
+            <h3><svg class="icon" style="color:var(--primary);vertical-align:-3px"><use href="#i-sparkles"/></svg> No syllabus at hand?</h3>
+            <p class="small muted">Try a real scanned BCA Semester V syllabus: 7 subjects, 16 pages. It's already read, so the plan appears instantly.</p>
+            <form method="POST" action="/add-syllabus/sample">
+                <input type="hidden" name="study_hours" value="3">
+                <button type="submit" class="btn btn-soft btn-block"><svg class="icon"><use href="#i-file"/></svg> Try the sample syllabus</button>
+            </form>
+        </section>
+        {% endif %}
+        <section class="card">
+            <h3>What happens next</h3>
+            <ol class="steps">
+                <li><span class="step-num">1</span><div><strong>Every page is read</strong><p>Digital text instantly; scanned pages with fast OCR, shown with a live progress bar.</p></div></li>
+                <li><span class="step-num">2</span><div><strong>Subject → Module → Topic</strong><p>Syllabus tables are understood, including module hours, case studies and lab lists.</p></div></li>
+                <li><span class="step-num">3</span><div><strong>Time for every topic</strong><p>Hours come from the syllabus hours and the ML model, and are fitted inside your study windows before the deadline.</p></div></li>
+                <li><span class="step-num">4</span><div><strong>You approve</strong><p>{% if calendar_enabled %}Nothing reaches Google Calendar until you approve. Each session then gets a 10-minute reminder.{% else %}Approved sessions go into your timetable.{% endif %}</p></div></li>
+            </ol>
+        </section>
+        <div class="banner banner-info mb-0">
+            <svg class="icon"><use href="#i-clock"/></svg>
+            <div><p>Uploading the same file again is instant, because its pages are cached after the first read.</p></div>
+        </div>
+    </aside>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        var d = document.getElementById("deadline");
+        if (d && !d.value) {
+            var t = new Date(); t.setDate(t.getDate() + 1);
+            d.min = t.toISOString().slice(0, 10);
+        }
+    })();
+</script>
+{% endblock %}

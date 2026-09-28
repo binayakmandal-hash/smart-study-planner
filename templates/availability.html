@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% set active_page = 'availability' %}
+{% block title %}Study Hours · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-clock"/></svg> Study hours</div>
+        <h1>When can you study?</h1>
+        <p>Add your free time windows for each day. The planner only ever schedules sessions inside these windows, never during college or other commitments.</p>
+    </div>
+    <div class="page-actions"><a href="/add-syllabus" class="btn btn-primary"><svg class="icon"><use href="#i-upload"/></svg> Build a plan</a></div>
+</div>
+
+<section class="grid grid-3" style="margin-bottom:20px">
+    <div class="stat"><div class="stat-icon"><svg class="icon"><use href="#i-clock"/></svg></div>
+        <div><p class="stat-label">Average per day</p><p class="stat-value">{{ daily_avg_hours }}<small> h</small></p></div></div>
+    <div class="stat"><div class="stat-icon green"><svg class="icon"><use href="#i-calendar"/></svg></div>
+        <div><p class="stat-label">Per week</p><p class="stat-value">{{ total_weekly_hours }}<small> h</small></p></div></div>
+    <div class="stat"><div class="stat-icon blue"><svg class="icon"><use href="#i-target"/></svg></div>
+        <div><p class="stat-label">Scheduler rule</p><p class="stat-value" style="font-size:1.05rem">Availability first</p></div></div>
+</section>
+
+<div class="week-grid">
+    {% for day in days %}
+    <section class="card avail-day">
+        <h3><span>{{ day }}</span><span class="badge">{{ grouped_slots[day]|length }} window{{ 's' if grouped_slots[day]|length != 1 }}</span></h3>
+        <div class="day-bar" title="06:00 – 24:00">
+            {% for slot in grouped_slots[day] %}
+            {% set sh = slot['start_time'][:2]|int * 60 + slot['start_time'][3:5]|int %}
+            {% set eh = slot['end_time'][:2]|int * 60 + slot['end_time'][3:5]|int %}
+            <span style="left: {{ ((sh - 360) / 1080 * 100)|round(1) }}%; width: {{ ((eh - sh) / 1080 * 100)|round(1) }}%"></span>
+            {% endfor %}
+        </div>
+        {% if grouped_slots[day] %}
+            {% for slot in grouped_slots[day] %}
+            <div class="slot">
+                <span>{{ slot['start_time'] }} – {{ slot['end_time'] }}</span>
+                <form method="POST" action="/availability/delete/{{ slot['id'] }}" data-confirm="Remove this study window?">
+                    <button type="submit" class="btn btn-sm btn-danger no-disable" title="Remove" style="padding:4px 7px"><svg class="icon" style="width:14px;height:14px"><use href="#i-trash"/></svg></button>
+                </form>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="small muted">No study time on {{ day }}.</p>
+        {% endif %}
+        <form method="POST" action="/availability/add" class="add-slot">
+            <input type="hidden" name="day" value="{{ day }}">
+            <input type="time" name="start_time" required value="18:00" aria-label="Start time">
+            <input type="time" name="end_time" required value="21:00" aria-label="End time">
+            <button type="submit" class="btn btn-sm btn-soft"><svg class="icon"><use href="#i-plus"/></svg> Add</button>
+        </form>
+    </section>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Smart Study Planner{% endblock %}</title>
+    <script>!function(){try{var t=localStorage.getItem("theme");if(!t){t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.setAttribute("data-theme",t)}catch(e){}}();</script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+        <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></symbol>
+        <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="16.5" rx="2.5"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></symbol>
+        <symbol id="i-check-list" viewBox="0 0 24 24"><path d="M10 6h11M10 12h11M10 18h11M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5 2.5-2.5M3.5 18l1.5 1.5 2.5-2.5"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+        <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></symbol>
+        <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+        <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+        <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
+        <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4"/></symbol>
+        <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8zM19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></symbol>
+        <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M19 19v2H6"/></symbol>
+        <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 22a7 7 0 0 0 7-7c0-4-3-6.5-4-10-2.5 2-3 4-3 6-1-1-2-2.5-2-4C7 9 5 11.5 5 15a7 7 0 0 0 7 7z"/></symbol>
+        <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></symbol>
+        <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3.5v16H7zM13.5 4H17v16h-3.5z"/></symbol>
+        <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v5h5"/></symbol>
+        <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+        <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2.5h8l5 5V21a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 21zM14 2.5V8h5"/></symbol>
+        <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4M12 17v.5"/></symbol>
+        <symbol id="i-google" viewBox="0 0 24 24"><path d="M21 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h5a4.3 4.3 0 0 1-1.9 2.8v2.3h3c1.8-1.6 2.9-4 2.9-6.8zM12 21c2.5 0 4.6-.8 6.1-2.2l-3-2.3c-.8.6-1.9.9-3.1.9a5.4 5.4 0 0 1-5.1-3.7H3.8v2.4A9 9 0 0 0 12 21zM6.9 13.7a5.4 5.4 0 0 1 0-3.4V7.9H3.8a9 9 0 0 0 0 8.2zM12 6.6c1.3 0 2.5.5 3.5 1.4l2.6-2.6A9 9 0 0 0 3.8 7.9l3.1 2.4A5.4 5.4 0 0 1 12 6.6z"/></symbol>
+    </defs>
+</svg>
+
+{% set nav = [
+    ('home', '/', 'Dashboard', 'i-home'),
+    ('timetable', '/timetable', 'Timetable', 'i-calendar'),
+    ('tasks', '/tasks', 'Tasks', 'i-check-list'),
+    ('availability', '/availability', 'Study Hours', 'i-clock'),
+    ('history', '/study-history', 'Progress', 'i-chart'),
+] %}
+{% set active_page = active_page|default('') %}
+
+<div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+        <a class="brand" href="/">
+            <span class="brand-mark"><svg><use href="#i-book"/></svg></span>
+            <span class="brand-text">Smart Study<small>Planner</small></span>
+        </a>
+
+        <a href="/add-syllabus" class="btn btn-primary btn-block sidebar-cta {% if active_page == 'upload' %}is-active{% endif %}">
+            <svg class="icon"><use href="#i-upload"/></svg> Upload Syllabus
+        </a>
+
+        <nav class="side-nav" aria-label="Main">
+            {% for key, href, label, icon in nav %}
+            <a href="{{ href }}" class="side-link {% if active_page == key %}active{% endif %}">
+                <svg class="icon"><use href="#{{ icon }}"/></svg><span>{{ label }}</span>
+            </a>
+            {% endfor %}
+        </nav>
+
+        <div class="sidebar-foot">
+            {% if calendar_enabled %}
+            <div class="calendar-chip" title="Approved plans sync to Google Calendar with a 10-minute reminder">
+                <svg class="icon"><use href="#i-google"/></svg>
+                <span>Calendar reminders on approval</span>
+            </div>
+            {% endif %}
+            <a href="/reset" class="side-link danger-link {% if active_page == 'reset' %}active{% endif %}">
+                <svg class="icon"><use href="#i-reset"/></svg><span>Reset / start fresh</span>
+            </a>
+            <button class="theme-toggle-btn side-link" id="themeToggle" type="button" aria-label="Toggle theme">
+                <svg class="icon theme-icon-dark"><use href="#i-moon"/></svg>
+                <svg class="icon theme-icon-light"><use href="#i-sun"/></svg>
+                <span class="theme-label">Dark mode</span>
+            </button>
+        </div>
+    </aside>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <div class="main-col">
+        <header class="topbar">
+            <button class="icon-btn mobile-menu-btn" id="menuBtn" aria-label="Open menu">
+                <svg class="icon"><use href="#i-menu"/></svg>
+            </button>
+            <a class="topbar-brand" href="/">Smart Study Planner</a>
+            <div class="topbar-actions">{% block topbar_actions %}{% endblock %}</div>
+        </header>
+
+        <main class="container">
+            {% if demo_mode %}
+            <div class="banner banner-info demo-banner">
+                <svg class="icon"><use href="#i-sparkles"/></svg>
+                <div><p class="mb-0"><strong>Public demo.</strong> Everyone shares this data and it may reset at any time. Google Calendar sync is turned off here. Try it with the <a href="/add-syllabus">sample syllabus</a>.</p></div>
+            </div>
+            {% endif %}
+            {% with messages = get_flashed_messages() %}
+                {% if messages %}
+                <div class="flash-stack">
+                    {% for message in messages %}
+                    <div class="flash"><svg class="icon"><use href="#i-sparkles"/></svg><span>{{ message }}</span>
+                        <button class="flash-close" type="button" aria-label="Dismiss">&times;</button></div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            {% endwith %}
+
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</div>
+
+<nav class="bottom-nav" aria-label="Quick">
+    {% for key, href, label, icon in nav[:3] %}
+    <a href="{{ href }}" class="{% if active_page == key %}active{% endif %}"><svg class="icon"><use href="#{{ icon }}"/></svg><span>{{ label }}</span></a>
+    {% endfor %}
+    <a href="/add-syllabus" class="{% if active_page == 'upload' %}active{% endif %}"><svg class="icon"><use href="#i-upload"/></svg><span>Upload</span></a>
+</nav>
+
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

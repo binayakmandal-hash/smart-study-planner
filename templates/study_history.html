@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set active_page = 'history' %}
+{% block title %}Progress · Smart Study Planner{% endblock %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <div class="eyebrow"><svg class="icon"><use href="#i-chart"/></svg> Progress</div>
+        <h1>Study History &amp; ML Feedback</h1>
+        <p>Every session you log retrains the Linear Regression and Decision Tree models, so future plans match your real study speed.</p>
+    </div>
+</div>
+
+<div class="grid grid-main">
+    <section class="table-wrap">
+        <table>
+            <thead><tr><th>Date</th><th>Subject</th><th>Topic</th><th>Planned</th><th>Actual</th><th>Period</th><th>Status</th></tr></thead>
+            <tbody>
+                {% if history_records %}
+                    {% for record in history_records %}
+                    <tr>
+                        <td class="nowrap">{{ record['study_date'] }}</td>
+                        <td><strong>{{ record['subject'] }}</strong></td>
+                        <td>{{ record['topic'] }}</td>
+                        <td>{{ record['planned_hours'] }}h</td>
+                        <td><strong>{{ record['actual_hours'] }}h</strong></td>
+                        <td><span class="badge">{{ record['study_period'] }}</span></td>
+                        <td><span class="status completed">✓ {{ record['completion_status'] }}</span></td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr><td colspan="7"><div class="empty" style="border:0">No sessions logged yet. Tick sessions in your timetable, or log one here.</div></td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </section>
+
+    <section class="card">
+        <div class="card-head"><h2><svg class="icon"><use href="#i-plus"/></svg> Log a study session</h2></div>
+        <form method="POST" action="/log-study">
+            <div class="field"><label>Subject</label><input type="text" name="subject" placeholder="e.g. Financial Management" required></div>
+            <div class="field"><label>Topic</label><input type="text" name="topic" placeholder="e.g. Leverage Analysis" required></div>
+            <div class="form-row">
+                <div class="field"><label>Planned hours</label><input type="number" step="0.25" min="0.25" max="12" name="planned_hours" value="1.5" required></div>
+                <div class="field"><label>Actual hours</label><input type="number" step="0.25" min="0.25" max="12" name="actual_hours" value="1.5" required></div>
+            </div>
+            <div class="form-row">
+                <div class="field"><label>Period</label>
+                    <select name="study_period" required>
+                        <option value="Morning">Morning</option>
+                        <option value="Afternoon">Afternoon</option>
+                        <option value="Evening" selected>Evening</option>
+                        <option value="Night">Night</option>
+                    </select></div>
+                <div class="field"><label>Date</label><input type="date" name="study_date" value="{{ today }}" required></div>
+            </div>
+            <button type="submit" class="btn btn-primary btn-block"><svg class="icon"><use href="#i-sparkles"/></svg> Save &amp; retrain ML</button>
+        </form>
+    </section>
+</div>
+{% endblock %}
