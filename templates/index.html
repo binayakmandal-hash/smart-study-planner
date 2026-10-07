@@ -3,7 +3,7 @@
 {% block title %}Dashboard · Smart Study Planner{% endblock %}
 
 {% macro session_card(s, done=False, show_date=False) -%}
-{% set c = colors.get(s['subject'], '#5b5bd6') %}
+{% set c = colors.get(s['subject'], 'var(--lav)') %}
 <div class="session {% if done %}is-done{% endif %}" style="--c: {{ c }}"
      data-id="{{ s['id'] }}" data-date="{{ today }}" data-start="{{ s['start_time'] }}" data-end="{{ s['end_time'] }}"
      data-alarm="{{ s['alarm'] }}" data-topic="{{ s['topic'] }}" data-subject="{{ s['subject'] }}">
@@ -31,53 +31,107 @@
 
 {% block content %}
 
-<section class="hero-card">
-    <div style="position:relative;z-index:1">
-        <div class="hero-date">{{ now_label }}</div>
-        <h1>{% if hour < 12 %}Good morning{% elif hour < 17 %}Good afternoon{% else %}Good evening{% endif %} 👋</h1>
-        <p>
-            {% if today_sessions %}
-                You have <strong>{{ today_sessions|length }}</strong> study session{{ 's' if today_sessions|length != 1 }} left today. One step at a time — you've got this.
-            {% elif done_today %}
-                All of today's sessions are done. Great work — rest or get ahead!
-            {% else %}
-                No sessions today. Upload your syllabus and Smart Study Planner will build a full plan for every subject.
-            {% endif %}
-        </p>
-        <div class="hero-actions">
-            {% if latest_draft %}
-            <a href="/plan-preview/{{ latest_draft['id'] }}" class="btn btn-white"><svg class="icon"><use href="#i-sparkles"/></svg> Review draft plan</a>
-            {% else %}
-            <a href="/add-syllabus" class="btn btn-white"><svg class="icon"><use href="#i-upload"/></svg> Upload syllabus</a>
-            {% endif %}
-            <a href="/timetable" class="btn btn-glass"><svg class="icon"><use href="#i-calendar"/></svg> Open timetable</a>
-        </div>
+<div class="page-head">
+    <div>
+        <h1>Study Overview</h1>
+        <p>{% if today_sessions %}{{ today_sessions|length }} session{{ 's' if today_sessions|length != 1 }} left today. Take control of your semester.{% elif done_today %}Everything for today is done. Rest, or get ahead.{% else %}No sessions today. Upload a syllabus to get a full plan.{% endif %}</p>
     </div>
-    <div class="countdown" title="{{ exam_date or '' }}">
-        {% if exam_days is not none %}
-            <div><strong>{{ exam_days }}</strong><span>day{{ 's' if exam_days != 1 }} to deadline</span></div>
-        {% else %}
-            <div><strong>{{ streak }}</strong><span>day streak 🔥</span></div>
+    <div class="page-actions">
+        {% if exam_days is not none %}<span class="pill"><svg class="icon"><use href="#i-target"/></svg> {{ exam_days }} day{{ 's' if exam_days != 1 }} to deadline</span>{% endif %}
+        {% if latest_draft %}
+        <a href="/plan-preview/{{ latest_draft['id'] }}" class="btn btn-primary"><svg class="icon"><use href="#i-sparkles"/></svg> Review draft plan</a>
         {% endif %}
     </div>
-</section>
+</div>
 
-<section class="grid grid-4" style="margin-bottom:20px">
-    <div class="stat">
-        <div class="stat-icon green"><svg class="icon"><use href="#i-clock"/></svg></div>
-        <div><p class="stat-label">Hours Studied</p><p class="stat-value">{{ hours_studied or 0 }}<small> h</small></p></div>
+{% set bubble_cls = ['b1', 'b2', 'b3'] %}
+{% set row_colors = ['var(--lav)', 'var(--ink-c)', 'var(--lime)'] %}
+<section class="dash-grid">
+    <!-- planned hours by subject: bubbles + bars -->
+    <div class="card area-load">
+        <div class="card-head"><h2><svg class="icon"><use href="#i-clock"/></svg> Planned hours</h2>
+            <a href="/timetable" class="small muted">Timetable</a></div>
+        {% if subject_load %}
+            {% set done_all = subject_load|sum(attribute='done') %}
+            {% set planned_all = subject_load|sum(attribute='planned') %}
+            <div class="big-num">{{ total_planned_h }}<small>hours in your plan</small>
+                <span class="delta">{{ (100 * done_all / planned_all)|round|int if planned_all else 0 }}% done</span></div>
+            <div class="bubbles">
+                {% for e in subject_load[:3] %}
+                {% set d = (70 + 80 * ((e.planned / bubble_max) ** 0.5))|round|int %}
+                <div class="bubble {{ bubble_cls[loop.index0] }}" style="width: {{ d }}px; height: {{ d }}px" title="{{ e.subject }}">
+                    <div><strong>{{ e.planned_h|round|int }}h</strong><span>{{ e.subject }}</span></div>
+                </div>
+                {% endfor %}
+            </div>
+            <div class="load-rows">
+                {% for e in subject_load[:3] %}
+                <div>
+                    <div class="load-row-top"><strong>{{ e.percent }}<small>%</small></strong>
+                        <span>{{ e.subject }} <i class="dot" style="background: {{ row_colors[loop.index0] }}"></i></span></div>
+                    <div class="progress"><span style="width: {{ e.percent if e.percent > 2 else 2 }}%; background: {{ row_colors[loop.index0] }}"></span></div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div class="empty" style="margin-top:auto"><svg class="icon"><use href="#i-upload"/></svg><h3>No plan yet</h3>
+                <p class="mb-0"><a href="/add-syllabus">Upload your syllabus</a> to see hours per subject.</p></div>
+        {% endif %}
     </div>
-    <div class="stat">
-        <div class="stat-icon amber"><svg class="icon"><use href="#i-target"/></svg></div>
-        <div><p class="stat-label">Hours Planned Ahead</p><p class="stat-value">{{ hours_remaining or 0 }}<small> h</small></p></div>
+
+    <div class="stat area-stat1">
+        <div class="stat-icon"><svg class="icon"><use href="#i-clock"/></svg></div>
+        <div><p class="stat-label">Hours Studied</p><p class="stat-value">{{ hours_studied or 0 }}<small> h total</small></p></div>
+        <div class="stat-foot" style="grid-column:1/-1"><span><strong>{{ week_done }} h</strong> this week</span><span><strong>{{ streak }}</strong> day streak</span></div>
     </div>
-    <div class="stat">
-        <div class="stat-icon red"><svg class="icon"><use href="#i-flame"/></svg></div>
-        <div><p class="stat-label">Study Streak</p><p class="stat-value">{{ streak }}<small> day{{ 's' if streak != 1 }}</small></p></div>
+
+    <div class="stat area-stat2">
+        <div class="stat-icon"><svg class="icon"><use href="#i-target"/></svg></div>
+        <div><p class="stat-label">Today</p><p class="stat-value">{{ today_sessions|length }}<small> sessions left</small></p></div>
+        <div class="stat-foot" style="grid-column:1/-1"><span><strong>{{ done_today|length }}</strong> done today</span><span><strong>{{ hours_remaining or 0 }} h</strong> ahead</span></div>
     </div>
-    <div class="stat">
-        <div class="stat-icon blue"><svg class="icon"><use href="#i-check-list"/></svg></div>
-        <div><p class="stat-label">Total Tasks</p><p class="stat-value">{{ completed_tasks }}<small> / {{ total_tasks }} done</small></p></div>
+
+    <!-- consistency dot matrix -->
+    <div class="card area-dots">
+        <div class="card-head"><h2><svg class="icon"><use href="#i-flame"/></svg> Consistency</h2>
+            <span class="small muted">10 weeks</span></div>
+        <div class="big-num">{{ consistency }}<small>% of days studied</small>
+            {% if streak %}<span class="delta">{{ streak }}-day streak</span>{% endif %}</div>
+        <div class="dot-grid" style="margin-top:18px">
+            {% for week in dot_weeks %}
+            <div class="dot-col">
+                {% for d in week %}
+                <span class="dot-cell l{{ d.level }} {% if d.future %}future{% endif %}" title="{{ d.date }}: {{ d.hours }} h"></span>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        <div class="dot-legend">
+            <span><i style="background: var(--lav-soft)"></i>No study</span>
+            <span><i style="background: var(--lav)"></i>1–2.5 h</span>
+            <span><i style="background: var(--lav-2)"></i>2.5 h+</span>
+        </div>
+    </div>
+
+    <!-- this week (dark card) -->
+    <div class="card card-dark area-week">
+        <div class="card-head"><h2><svg class="icon"><use href="#i-chart"/></svg> This week</h2>
+            <a href="/study-history" class="pill" style="background:#2a2a2d;color:#f4f4f2">Progress</a></div>
+        <div class="week-stats">
+            <div class="week-stat"><strong>{{ week_completion }}<small>%</small></strong><span>Plan completed</span></div>
+            <div class="week-stat lav"><strong>{{ week_done }}<small>h</small></strong><span>Studied of {{ week_planned }} h planned</span></div>
+        </div>
+        <div class="hbars">
+            {% for b in week_bars %}
+            <div class="hbar {% if b.is_today %}is-today{% endif %}" title="{{ b.label }}: {{ b.done }} h studied / {{ b.planned }} h planned">
+                <div class="hbar-pair">
+                    <i class="p" style="height: {{ (8 + 92 * b.planned / week_max)|round|int }}%"></i>
+                    <i class="d {% if b.done %}has{% endif %}" style="height: {{ (8 + 92 * b.done / week_max)|round|int }}%"></i>
+                </div>
+                <span>{{ b.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
     </div>
 </section>
 
@@ -111,7 +165,7 @@
             <div class="timeline">
                 {% for occ in upcoming %}
                 {% set s = occ.session %}
-                <div class="session" style="--c: {{ colors.get(s['subject'], '#5b5bd6') }}">
+                <div class="session" style="--c: {{ colors.get(s['subject'], 'var(--lav)') }}">
                     <div class="session-time">{{ s['start_time'] }}<small>{{ occ.date[5:] }}</small></div>
                     <div class="session-body">
                         <p class="session-subject">{{ s['subject'] }}</p>
@@ -160,25 +214,13 @@
             {% endif %}
         </section>
 
-        <section class="card">
-            <div class="card-head"><h2><svg class="icon"><use href="#i-chart"/></svg> Last 7 days</h2><span class="small muted">{{ completed_topics }}/{{ total_topics }} topics</span></div>
-            <div class="bars">
-                {% for d in week_hours %}
-                <div class="bar {% if d.is_today %}is-today{% endif %}" title="{{ d.hours }} h">
-                    <span class="bar-value">{{ d.hours if d.hours else '' }}</span>
-                    <div class="bar-fill" style="height: {{ (d.hours / max_week * 100)|round(0) }}%"></div>
-                    <span class="bar-label">{{ d.label }}</span>
-                </div>
-                {% endfor %}
-            </div>
-        </section>
 
         <section class="card">
             <div class="card-head">
                 <h2><svg class="icon"><use href="#i-check-list"/></svg> Tasks</h2>
                 <a href="/add-task" class="btn btn-sm btn-soft"><svg class="icon"><use href="#i-plus"/></svg> Add</a>
             </div>
-            <p class="small muted">{{ pending_tasks }} pending · {{ completed_tasks }} completed · {{ overdue_tasks|length }} overdue</p>
+            <p class="small muted">Total Tasks: {{ total_tasks }}. {{ pending_tasks }} pending, {{ completed_tasks }} completed, {{ overdue_tasks|length }} overdue.</p>
             {% if upcoming_tasks %}
                 {% for t in upcoming_tasks %}
                 <div class="subject-row">

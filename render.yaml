@@ -5,9 +5,14 @@ services:
     runtime: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /
+    healthCheckPath: /login
     envVars:
       - key: FLASK_SECRET_KEY
         generateValue: true
       - key: STUDYPLANNER_DEMO
         value: "1"
+      # Google sign-in (see GOOGLE_LOGIN_SETUP.md). Render asks for these values.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false

@@ -1,10 +1,13 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, g, session, abort
 from werkzeug.utils import secure_filename
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
 import datetime
 import os
 import json
 import re
+import secrets
 import threading
 import uuid
 
@@ -21,10 +24,39 @@ from ml_models import (
 )
 from scheduler import generate_study_schedule, validate_deadline
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or os.urandom(32)
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(__name__)
+# Behind Render's proxy: trust X-Forwarded-Proto/Host so Google sign-in builds https:// URLs.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+
+def _load_secret_key():
+    """Stable secret key so people stay signed in across restarts."""
+    if os.environ.get("FLASK_SECRET_KEY"):
+        return os.environ["FLASK_SECRET_KEY"]
+    key_file = os.path.join(BASE_DIR, ".secret_key")
+    try:
+        if os.path.exists(key_file):
+            with open(key_file, "r", encoding="utf-8") as handle:
+                key = handle.read().strip()
+                if key:
+                    return key
+        key = secrets.token_hex(32)
+        with open(key_file, "w", encoding="utf-8") as handle:
+            handle.write(key)
+        return key
+    except OSError:
+        return secrets.token_hex(32)
+
+
+app.secret_key = _load_secret_key()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=30),
+)
+
 DATABASE_PATH = os.environ.get("STUDYPLANNER_DB") or os.path.join(BASE_DIR, "database.db")
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 
@@ -39,6 +71,8 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 # Set STUDYPLANNER_CALENDAR_SYNC=0 (tests do this) to never touch Google Calendar.
 app.config["CALENDAR_SYNC"] = os.environ.get("STUDYPLANNER_CALENDAR_SYNC", "1") != "0"
+# Set STUDYPLANNER_LOGIN=0 to skip sign-in (single local user; used by the tests).
+app.config["LOGIN_REQUIRED"] = os.environ.get("STUDYPLANNER_LOGIN", "1") != "0"
 
 # Public demo mode (Render): no Google Calendar, visible demo banner, sample syllabus.
 DEMO_MODE = os.environ.get("STUDYPLANNER_DEMO", "0") == "1"
@@ -46,13 +80,68 @@ if DEMO_MODE:
     app.config["CALENDAR_SYNC"] = False
 SAMPLE_SYLLABUS = os.path.join(BASE_DIR, "sample", "5th_sem_syllabus.pdf")
 
+# Owner of the existing Google Calendar connection (token.json). Only this account's
+# approved plans are synced to that calendar. Defaults to the first account created.
+OWNER_EMAIL = (os.environ.get("STUDYPLANNER_OWNER_EMAIL") or "").strip().lower()
+
+
+# =============================================================================
+# CURRENT USER HELPERS
+# =============================================================================
+
+def uid():
+    """Id of the signed-in user (every query is scoped to it)."""
+    user = g.get("user")
+    if user is None:
+        raise RuntimeError("No signed-in user for this request")
+    return user["id"]
+
+
+def is_owner():
+    user = g.get("user")
+    if not user:
+        return False
+    if OWNER_EMAIL:
+        return (user["email"] or "").lower() == OWNER_EMAIL
+    connection = get_database_connection()
+    first = connection.execute(
+        "SELECT MIN(id) FROM users WHERE email != 'local@studyplanner'"
+    ).fetchone()[0]
+    connection.close()
+    return first is None or user["id"] == first or user["email"] == "local@studyplanner"
+
 
 @app.context_processor
 def inject_globals():
+    counts = {}
+    user = g.get("user")
+    try:
+        if user:
+            connection = get_database_connection()
+            counts["tasks"] = connection.execute(
+                "SELECT COUNT(*) FROM tasks WHERE status = 'Pending' AND user_id = ?", (user["id"],)).fetchone()[0]
+            counts["timetable"] = connection.execute(
+                "SELECT COUNT(*) FROM timetable WHERE schedule_type = 'one-time' AND date = ? AND status != 'Completed' AND user_id = ?",
+                (datetime.date.today().strftime("%Y-%m-%d"), user["id"])
+            ).fetchone()[0]
+            connection.close()
+    except Exception:
+        pass
+    name = (user["name"] if user else "") or (user["email"].split("@")[0] if user and user["email"] else "Student")
+    initials = "".join(part[:1] for part in name.split()[:2]).upper() or "S"
     return {
         "demo_mode": DEMO_MODE,
-        "calendar_enabled": app.config.get("CALENDAR_SYNC", True),
+        "calendar_enabled": app.config.get("CALENDAR_SYNC", True) and is_owner(),
         "sample_available": os.path.exists(SAMPLE_SYLLABUS),
+        "nav_counts": counts,
+        "current_user": user,
+        "login_required": app.config.get("LOGIN_REQUIRED", True),
+        "google_login_enabled": google_login_config() is not None,
+        "profile_name": name,
+        "profile_initials": initials,
+        "profile_picture": (user["picture"] if user else None),
+        "profile_sub": (user["email"] if user and user["email"] != "local@studyplanner" else "Local account"),
+        "today_label": datetime.date.today().strftime("%d %B, %Y"),
     }
 
 
@@ -289,41 +378,390 @@ def ensure_database():
         """
     )
 
-    # Seed default student availability if empty
-    avail_count = connection.execute(
-        "SELECT COUNT(*) FROM student_availability"
-    ).fetchone()[0]
-
-    if avail_count == 0:
-        default_slots = [
-            ("Monday", "17:00", "20:00"),
-            ("Monday", "21:00", "23:00"),
-            ("Tuesday", "17:00", "20:00"),
-            ("Tuesday", "21:00", "23:00"),
-            ("Wednesday", "17:00", "20:00"),
-            ("Wednesday", "21:00", "23:00"),
-            ("Thursday", "17:00", "20:00"),
-            ("Thursday", "21:00", "23:00"),
-            ("Friday", "17:00", "20:00"),
-            ("Friday", "21:00", "23:00"),
-            ("Saturday", "09:00", "12:00"),
-            ("Saturday", "14:00", "17:00"),
-            ("Saturday", "18:00", "21:00"),
-            ("Sunday", "09:00", "12:00"),
-            ("Sunday", "14:00", "17:00"),
-            ("Sunday", "18:00", "21:00"),
-        ]
-        for day, st, et in default_slots:
-            connection.execute(
-                """
-                INSERT INTO student_availability (day_of_week, start_time, end_time, is_active)
-                VALUES (?, ?, ?, 1)
-                """,
-                (day, st, et)
-            )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL UNIQUE,
+            username TEXT UNIQUE,
+            name TEXT,
+            password_hash TEXT,
+            google_sub TEXT UNIQUE,
+            picture TEXT,
+            created_at TEXT NOT NULL,
+            last_login TEXT
+        )
+        """
+    )
+    for table in ["tasks", "timetable", "syllabuses", "subjects", "topics",
+                  "generated_plans", "study_history", "student_availability"]:
+        add_column(table, "user_id", "INTEGER")
+        connection.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_user ON {table}(user_id)")
 
     connection.commit()
     connection.close()
+
+
+
+# =============================================================================
+# ACCOUNTS: sign up, sign in (email/username + password), Google sign-in
+# =============================================================================
+
+DEFAULT_AVAILABILITY_SLOTS = [
+    ("Monday", "17:00", "20:00"), ("Monday", "21:00", "23:00"),
+    ("Tuesday", "17:00", "20:00"), ("Tuesday", "21:00", "23:00"),
+    ("Wednesday", "17:00", "20:00"), ("Wednesday", "21:00", "23:00"),
+    ("Thursday", "17:00", "20:00"), ("Thursday", "21:00", "23:00"),
+    ("Friday", "17:00", "20:00"), ("Friday", "21:00", "23:00"),
+    ("Saturday", "09:00", "12:00"), ("Saturday", "14:00", "17:00"), ("Saturday", "18:00", "21:00"),
+    ("Sunday", "09:00", "12:00"), ("Sunday", "14:00", "17:00"), ("Sunday", "18:00", "21:00"),
+]
+OWNED_TABLES = ["tasks", "timetable", "syllabuses", "subjects", "topics",
+                "generated_plans", "study_history", "student_availability"]
+PUBLIC_ENDPOINTS = {"login", "signup", "forgot_password", "auth_google", "auth_google_callback", "static"}
+LOCAL_EMAIL = "local@studyplanner"
+USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,30}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+GOOGLE_LOGIN_FILE = os.path.join(BASE_DIR, "google_login.json")
+GOOGLE_LOGIN_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
+
+
+def seed_availability(connection, user_id):
+    has_any = connection.execute(
+        "SELECT 1 FROM student_availability WHERE user_id = ? LIMIT 1", (user_id,)
+    ).fetchone()
+    if not has_any:
+        for day, st, et in DEFAULT_AVAILABILITY_SLOTS:
+            connection.execute(
+                "INSERT INTO student_availability (day_of_week, start_time, end_time, is_active, user_id) VALUES (?, ?, ?, 1, ?)",
+                (day, st, et, user_id)
+            )
+
+
+def claim_unowned_data(connection, user_id):
+    """Data created before accounts existed (user_id IS NULL) goes to the first account."""
+    for table in OWNED_TABLES:
+        connection.execute(f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL", (user_id,))
+
+
+def get_user(connection, user_id):
+    return connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+
+
+def create_user(connection, email, name="", username=None, password=None, google_sub=None, picture=None):
+    real_accounts = connection.execute(
+        "SELECT COUNT(*) FROM users WHERE email != ?", (LOCAL_EMAIL,)
+    ).fetchone()[0]
+    cursor = connection.execute(
+        """
+        INSERT INTO users (email, username, name, password_hash, google_sub, picture, created_at, last_login)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (email.lower(), username, name, generate_password_hash(password) if password else None,
+         google_sub, picture, datetime.datetime.now().isoformat(), datetime.datetime.now().isoformat())
+    )
+    user_id = cursor.lastrowid
+    if real_accounts == 0 or (OWNER_EMAIL and email.lower() == OWNER_EMAIL):
+        # the first account (you, on your laptop) keeps everything created so far
+        claim_unowned_data(connection, user_id)
+        local = connection.execute("SELECT id FROM users WHERE email = ?", (LOCAL_EMAIL,)).fetchone()
+        if local:
+            for table in OWNED_TABLES:
+                connection.execute(f"UPDATE {table} SET user_id = ? WHERE user_id = ?", (user_id, local["id"]))
+    seed_availability(connection, user_id)
+    connection.commit()
+    return user_id
+
+
+def start_session(user_id):
+    session.clear()
+    session["user_id"] = user_id
+    session.permanent = True
+
+
+def _safe_redirect_target(target):
+    if target and target.startswith("/") and not target.startswith("//"):
+        return target
+    return url_for("home")
+
+
+@app.before_request
+def load_current_user():
+    g.user = None
+    connection = get_database_connection()
+    try:
+        if not app.config.get("LOGIN_REQUIRED", True):
+            local = connection.execute("SELECT * FROM users WHERE email = ?", (LOCAL_EMAIL,)).fetchone()
+            if not local:
+                local_id = create_user(connection, LOCAL_EMAIL, name="Local Student")
+                local = get_user(connection, local_id)
+            g.user = local
+            return None
+        if session.get("user_id"):
+            g.user = get_user(connection, session["user_id"])
+            if g.user is None:
+                session.clear()
+    finally:
+        connection.close()
+
+    if g.user is None and request.endpoint not in PUBLIC_ENDPOINTS:
+        if request.path.startswith("/api/"):
+            return jsonify({"status": "signed_out"}), 401
+        return redirect(url_for("login", next=request.full_path if request.method == "GET" else None))
+    return None
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if g.get("user") and app.config.get("LOGIN_REQUIRED", True):
+        return redirect(url_for("home"))
+    next_url = request.values.get("next", "")
+    if request.method == "POST":
+        identifier = request.form.get("identifier", "").strip().lower()
+        password = request.form.get("password", "")
+        connection = get_database_connection()
+        user = connection.execute(
+            "SELECT * FROM users WHERE (lower(email) = ? OR lower(username) = ?) AND email != ?",
+            (identifier, identifier, LOCAL_EMAIL)
+        ).fetchone()
+        if user and user["password_hash"] and check_password_hash(user["password_hash"], password):
+            connection.execute("UPDATE users SET last_login = ? WHERE id = ?",
+                               (datetime.datetime.now().isoformat(), user["id"]))
+            connection.commit()
+            connection.close()
+            start_session(user["id"])
+            return redirect(_safe_redirect_target(next_url))
+        connection.close()
+        if user and not user["password_hash"]:
+            error = "This account uses Google. Continue with Google to sign in."
+        else:
+            error = "Incorrect email/username or password."
+        return render_template("login.html", error=error, identifier=identifier, next_url=next_url), 401
+    return render_template("login.html", next_url=next_url)
+
+
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if g.get("user") and app.config.get("LOGIN_REQUIRED", True):
+        return redirect(url_for("home"))
+    form = {"name": "", "email": "", "username": ""}
+    if request.method == "POST":
+        form = {key: request.form.get(key, "").strip() for key in form}
+        password = request.form.get("password", "")
+        confirm = request.form.get("confirm", "")
+        error = None
+        if not form["name"]:
+            error = "Enter your name."
+        elif not EMAIL_RE.match(form["email"]):
+            error = "Enter a valid email address."
+        elif form["username"] and not USERNAME_RE.match(form["username"]):
+            error = "Username can use 3–30 letters, numbers, dots, dashes or underscores."
+        elif len(password) < 8:
+            error = "Password must be at least 8 characters."
+        elif password != confirm:
+            error = "The two passwords don't match."
+        connection = get_database_connection()
+        if not error:
+            taken = connection.execute(
+                "SELECT email, username FROM users WHERE lower(email) = ? OR (username IS NOT NULL AND lower(username) = ?)",
+                (form["email"].lower(), (form["username"] or "\u0000").lower())
+            ).fetchone()
+            if taken and taken["email"] == form["email"].lower():
+                error = "An account with this email already exists. Sign in instead."
+            elif taken:
+                error = "That username is taken."
+        if error:
+            connection.close()
+            return render_template("signup.html", error=error, form=form), 400
+        user_id = create_user(connection, form["email"], name=form["name"],
+                              username=form["username"] or None, password=password)
+        connection.close()
+        start_session(user_id)
+        flash(f"Welcome, {form['name'].split()[0]}! Your account is ready.")
+        return redirect(url_for("home"))
+    return render_template("signup.html", form=form)
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    flash("You're signed out.")
+    return redirect(url_for("login"))
+
+
+@app.route("/forgot-password")
+def forgot_password():
+    return render_template("forgot.html")
+
+
+@app.route("/account", methods=["GET", "POST"])
+def account():
+    connection = get_database_connection()
+    user = get_user(connection, uid())
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        new_password = request.form.get("new_password", "")
+        current = request.form.get("current_password", "")
+        if name:
+            connection.execute("UPDATE users SET name = ? WHERE id = ?", (name, user["id"]))
+        if new_password:
+            if len(new_password) < 8:
+                connection.close()
+                flash("New password must be at least 8 characters.")
+                return redirect(url_for("account"))
+            if user["password_hash"] and not check_password_hash(user["password_hash"], current):
+                connection.close()
+                flash("Your current password is not correct.")
+                return redirect(url_for("account"))
+            connection.execute("UPDATE users SET password_hash = ? WHERE id = ?",
+                               (generate_password_hash(new_password), user["id"]))
+        connection.commit()
+        connection.close()
+        flash("Account updated.")
+        return redirect(url_for("account"))
+    connection.close()
+    return render_template("account.html", user=user, owner=is_owner())
+
+
+# ---- Google sign-in ---------------------------------------------------------
+
+def google_login_config():
+    """Web OAuth client from env vars or google_login.json (downloaded from Google Cloud)."""
+    client_id = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+    if client_id and client_secret:
+        return {"client_id": client_id, "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token"}
+    if os.path.exists(GOOGLE_LOGIN_FILE):
+        try:
+            with open(GOOGLE_LOGIN_FILE, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            web = data.get("web")
+            if web and web.get("client_id") and web.get("client_secret"):
+                return web
+        except (OSError, ValueError):
+            pass
+    return None
+
+
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+
+
+def _google_redirect_uri():
+    return url_for("auth_google_callback", _external=True)
+
+
+def _http_json(url, data=None, headers=None):
+    """Small JSON-over-HTTPS helper (standard library only)."""
+    import urllib.parse
+    import urllib.request
+    body = urllib.parse.urlencode(data).encode() if data is not None else None
+    req = urllib.request.Request(url, data=body, headers=headers or {})
+    with urllib.request.urlopen(req, timeout=15) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def google_exchange_code(code, config):
+    """Authorization code -> Google profile {sub, email, email_verified, name, picture}."""
+    tokens = _http_json(GOOGLE_TOKEN_URL, data={
+        "code": code,
+        "client_id": config["client_id"],
+        "client_secret": config["client_secret"],
+        "redirect_uri": _google_redirect_uri(),
+        "grant_type": "authorization_code",
+        "code_verifier": session.get("oauth_verifier", ""),
+    })
+    access_token = tokens.get("access_token")
+    if not access_token:
+        raise ValueError("Google did not return an access token")
+    # The token came straight from Google over HTTPS with our client secret,
+    # so the profile read with it is trustworthy.
+    return _http_json(GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
+
+
+@app.route("/auth/google")
+def auth_google():
+    import base64
+    import hashlib
+    import urllib.parse
+    config = google_login_config()
+    if config is None:
+        flash("Google sign-in isn't set up yet. Use email and password, or see GOOGLE_LOGIN_SETUP.md.")
+        return redirect(url_for("login"))
+    state = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    session["oauth_state"] = state
+    session["oauth_verifier"] = verifier
+    session["oauth_next"] = request.args.get("next", "")
+    params = {
+        "client_id": config["client_id"],
+        "redirect_uri": _google_redirect_uri(),
+        "response_type": "code",
+        "scope": " ".join(GOOGLE_LOGIN_SCOPES),
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "prompt": "select_account",
+        "access_type": "online",
+    }
+    return redirect(GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode(params))
+
+
+@app.route("/auth/google/callback")
+def auth_google_callback():
+    config = google_login_config()
+    expected_state = session.pop("oauth_state", None)
+    if config is None or not expected_state:
+        return redirect(url_for("login"))
+    if request.args.get("error"):
+        flash("Google sign-in was cancelled.")
+        return redirect(url_for("login"))
+    if request.args.get("state") != expected_state or not request.args.get("code"):
+        flash("Google sign-in expired. Please try again.")
+        return redirect(url_for("login"))
+    try:
+        info = google_exchange_code(request.args["code"], config)
+    except Exception as error:
+        print("Google sign-in error:", error)
+        flash("Google sign-in failed. Please try again.")
+        return redirect(url_for("login"))
+    session.pop("oauth_verifier", None)
+
+    if not info.get("email") or info.get("email_verified") not in (True, "true"):
+        flash("Your Google account email isn't verified.")
+        return redirect(url_for("login"))
+
+    email = info["email"].lower()
+    connection = get_database_connection()
+    user = connection.execute("SELECT * FROM users WHERE google_sub = ?", (info["sub"],)).fetchone()
+    if user is None:
+        user = connection.execute("SELECT * FROM users WHERE lower(email) = ?", (email,)).fetchone()
+        if user:   # link Google to an existing email/password account
+            connection.execute("UPDATE users SET google_sub = ?, picture = COALESCE(picture, ?) WHERE id = ?",
+                               (info["sub"], info.get("picture"), user["id"]))
+            user_id = user["id"]
+        else:
+            user_id = create_user(connection, email, name=info.get("name") or email.split("@")[0],
+                                  google_sub=info["sub"], picture=info.get("picture"))
+    else:
+        user_id = user["id"]
+    connection.execute("UPDATE users SET last_login = ?, picture = ? WHERE id = ?",
+                       (datetime.datetime.now().isoformat(), info.get("picture"), user_id))
+    connection.commit()
+    connection.close()
+
+    next_url = session.get("oauth_next", "")
+    start_session(user_id)
+    return redirect(_safe_redirect_target(next_url))
+
 
 
 def get_google_credentials():
@@ -354,6 +792,9 @@ def get_google_credentials():
 
 def get_google_service():
     if not app.config.get("CALENDAR_SYNC", True):
+        return None
+    # token.json is the owner's Google Calendar: never write other users' plans to it
+    if g.get("user") is not None and not is_owner():
         return None
 
     credentials = get_google_credentials()
@@ -624,7 +1065,7 @@ def expand_sessions(connection, sessions, date_from=None, date_to=None):
 def study_streak(connection):
     dates = {
         row["study_date"]
-        for row in connection.execute("SELECT DISTINCT study_date FROM study_history").fetchall()
+        for row in connection.execute("SELECT DISTINCT study_date FROM study_history WHERE user_id = ?", (uid(),)).fetchall()
     }
     day = datetime.date.today()
     if day.strftime("%Y-%m-%d") not in dates:
@@ -640,33 +1081,34 @@ def study_streak(connection):
 def home():
     connection = get_database_connection()
 
-    total_tasks = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-    completed_tasks = connection.execute("SELECT COUNT(*) FROM tasks WHERE status = 'Completed'").fetchone()[0]
-    pending_tasks = connection.execute("SELECT COUNT(*) FROM tasks WHERE status = 'Pending'").fetchone()[0]
+    me = uid()
+    total_tasks = connection.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ?", (me,)).fetchone()[0]
+    completed_tasks = connection.execute("SELECT COUNT(*) FROM tasks WHERE status = 'Completed' AND user_id = ?", (me,)).fetchone()[0]
+    pending_tasks = connection.execute("SELECT COUNT(*) FROM tasks WHERE status = 'Pending' AND user_id = ?", (me,)).fetchone()[0]
 
     today_tasks = connection.execute(
-        "SELECT * FROM tasks WHERE deadline = date('now', 'localtime') AND status = 'Pending'"
+        "SELECT * FROM tasks WHERE deadline = date('now', 'localtime') AND status = 'Pending' AND user_id = ?", (me,)
     ).fetchall()
     overdue_tasks = connection.execute(
-        "SELECT * FROM tasks WHERE deadline < date('now', 'localtime') AND status = 'Pending'"
+        "SELECT * FROM tasks WHERE deadline < date('now', 'localtime') AND status = 'Pending' AND user_id = ?", (me,)
     ).fetchall()
     upcoming_tasks = connection.execute(
-        "SELECT * FROM tasks WHERE status = 'Pending' ORDER BY deadline LIMIT 6"
+        "SELECT * FROM tasks WHERE status = 'Pending' AND user_id = ? ORDER BY deadline LIMIT 6", (me,)
     ).fetchall()
     subject_stats = connection.execute(
         """
         SELECT subject, COUNT(*) as total,
                SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) as completed,
                SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END) as pending
-        FROM tasks GROUP BY subject
-        """
+        FROM tasks WHERE user_id = ? GROUP BY subject
+        """, (me,)
     ).fetchall()
 
     today = datetime.date.today()
     today_str = today.strftime("%Y-%m-%d")
     week_end = (today + datetime.timedelta(days=6)).strftime("%Y-%m-%d")
 
-    all_rows = connection.execute("SELECT * FROM timetable ORDER BY start_time").fetchall()
+    all_rows = connection.execute("SELECT * FROM timetable WHERE user_id = ? ORDER BY start_time", (me,)).fetchall()
     pending_rows = [r for r in all_rows if r["status"] != "Completed"]
     today_sessions = [o["session"] for o in expand_sessions(connection, pending_rows, today_str, today_str)]
     done_today = [o["session"] for o in expand_sessions(
@@ -681,22 +1123,22 @@ def home():
                COUNT(*) AS total,
                SUM(CASE WHEN status = 'Completed' THEN 1 ELSE 0 END) AS done
         FROM timetable
-        WHERE schedule_type = 'one-time'
+        WHERE schedule_type = 'one-time' AND user_id = ?
         GROUP BY subject
         ORDER BY total DESC
-        """
+        """, (me,)
     ).fetchall()
     colors = subject_color_map([r["subject"] for r in progress_rows])
     subject_progress = [
         {"subject": r["subject"], "total": r["total"], "done": r["done"] or 0,
          "percent": int(round(100.0 * (r["done"] or 0) / r["total"])) if r["total"] else 0,
-         "color": colors.get(r["subject"], "#6366f1")}
+         "color": colors.get(r["subject"], "var(--lav)")}
         for r in progress_rows
     ][:8]
 
-    hours_studied = round(connection.execute("SELECT SUM(actual_hours) FROM study_history").fetchone()[0] or 0.0, 1)
-    total_topics = connection.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
-    completed_topics = connection.execute("SELECT COUNT(*) FROM topics WHERE status = 'Completed'").fetchone()[0]
+    hours_studied = round(connection.execute("SELECT SUM(actual_hours) FROM study_history WHERE user_id = ?", (me,)).fetchone()[0] or 0.0, 1)
+    total_topics = connection.execute("SELECT COUNT(*) FROM topics WHERE user_id = ?", (me,)).fetchone()[0]
+    completed_topics = connection.execute("SELECT COUNT(*) FROM topics WHERE status = 'Completed' AND user_id = ?", (me,)).fetchone()[0]
 
     remaining_minutes = 0
     for occ in expand_sessions(connection, pending_rows, today_str):
@@ -714,7 +1156,7 @@ def home():
     for i in range(6, -1, -1):
         d = today - datetime.timedelta(days=i)
         value = connection.execute(
-            "SELECT SUM(actual_hours) FROM study_history WHERE study_date = ?", (d.strftime("%Y-%m-%d"),)
+            "SELECT SUM(actual_hours) FROM study_history WHERE study_date = ? AND user_id = ?", (d.strftime("%Y-%m-%d"), me)
         ).fetchone()[0] or 0.0
         week_hours.append({"label": d.strftime("%a"), "hours": round(value, 1), "is_today": i == 0})
     max_week = max([w["hours"] for w in week_hours] + [1.0])
@@ -722,10 +1164,10 @@ def home():
     exam = connection.execute(
         """
         SELECT deadline FROM generated_plans
-        WHERE status = 'approved' AND deadline >= ?
+        WHERE status = 'approved' AND deadline >= ? AND user_id = ?
         ORDER BY deadline LIMIT 1
         """,
-        (today_str,)
+        (today_str, me)
     ).fetchone()
     exam_days = None
     exam_date = None
@@ -735,8 +1177,81 @@ def home():
 
     streak = study_streak(connection)
     latest_draft = connection.execute(
-        "SELECT id, created_at FROM generated_plans WHERE status = 'draft' ORDER BY id DESC LIMIT 1"
+        "SELECT id, created_at FROM generated_plans WHERE status = 'draft' AND user_id = ? ORDER BY id DESC LIMIT 1", (me,)
     ).fetchone()
+
+    # ---- planned vs done minutes per subject (bubble card) --------------------
+    def _minutes(start, end):
+        try:
+            st = datetime.datetime.strptime(start, "%H:%M")
+            et = datetime.datetime.strptime(end, "%H:%M")
+            if et <= st:
+                et += datetime.timedelta(days=1)
+            return int((et - st).total_seconds() // 60)
+        except (TypeError, ValueError):
+            return 0
+
+    load = {}
+    for r in all_rows:
+        if r["schedule_type"] != "one-time":
+            continue
+        entry = load.setdefault(r["subject"], {"subject": r["subject"], "planned": 0, "done": 0})
+        m = _minutes(r["start_time"], r["end_time"])
+        entry["planned"] += m
+        if r["status"] == "Completed":
+            entry["done"] += m
+    subject_load = sorted(load.values(), key=lambda e: -e["planned"])
+    for e in subject_load:
+        e["planned_h"] = round(e["planned"] / 60.0, 1)
+        e["done_h"] = round(e["done"] / 60.0, 1)
+        e["percent"] = int(round(100.0 * e["done"] / e["planned"])) if e["planned"] else 0
+        e["color"] = colors.get(e["subject"], SUBJECT_COLORS[0])
+    bubble_max = max([e["planned"] for e in subject_load[:3]] + [1])
+    total_planned_h = round(sum(e["planned"] for e in subject_load) / 60.0, 1)
+
+    # ---- consistency dot grid: last 10 weeks, one dot per day ------------------
+    history_by_day = {
+        row["study_date"]: row["h"] or 0.0
+        for row in connection.execute(
+            "SELECT study_date, SUM(actual_hours) AS h FROM study_history WHERE user_id = ? GROUP BY study_date", (me,)
+        ).fetchall()
+    }
+    grid_start = today - datetime.timedelta(days=today.weekday() + 63)
+    dot_weeks = []
+    studied_days = 0
+    counted_days = 0
+    for w in range(10):
+        week = []
+        for d in range(7):
+            day = grid_start + datetime.timedelta(days=w * 7 + d)
+            hours = history_by_day.get(day.strftime("%Y-%m-%d"), 0.0)
+            future = day > today
+            level = 0 if hours <= 0 else (1 if hours < 1 else (2 if hours < 2.5 else 3))
+            if not future:
+                counted_days += 1
+                studied_days += 1 if hours > 0 else 0
+            week.append({"date": day.strftime("%d %b"), "hours": round(hours, 1), "level": level, "future": future})
+        dot_weeks.append(week)
+    consistency = int(round(100.0 * studied_days / counted_days)) if counted_days else 0
+
+    # ---- this week: planned vs studied per day (dark card) -------------------
+    week_start = today - datetime.timedelta(days=today.weekday())
+    week_bars = []
+    week_planned = week_done = 0.0
+    for i in range(7):
+        day = week_start + datetime.timedelta(days=i)
+        ds = day.strftime("%Y-%m-%d")
+        planned = sum(
+            _minutes(o["session"]["start_time"], o["session"]["end_time"])
+            for o in expand_sessions(connection, all_rows, ds, ds)
+        ) / 60.0
+        done = history_by_day.get(ds, 0.0)
+        week_planned += planned
+        week_done += done
+        week_bars.append({"label": day.strftime("%a"), "planned": round(planned, 1), "done": round(done, 1),
+                          "is_today": day == today})
+    week_max = max([max(b["planned"], b["done"]) for b in week_bars] + [1.0])
+    week_completion = int(round(100.0 * week_done / week_planned)) if week_planned else 0
     connection.close()
 
     progress = int((completed_tasks / total_tasks) * 100) if total_tasks else 0
@@ -769,6 +1284,16 @@ def home():
         today=today_str,
         now_label=datetime.datetime.now().strftime("%A, %d %B"),
         hour=datetime.datetime.now().hour,
+        subject_load=subject_load,
+        bubble_max=bubble_max,
+        total_planned_h=total_planned_h,
+        dot_weeks=dot_weeks,
+        consistency=consistency,
+        week_bars=week_bars,
+        week_max=week_max,
+        week_completion=week_completion,
+        week_done=round(week_done, 1),
+        week_planned=round(week_planned, 1),
     )
 
 
@@ -785,15 +1310,16 @@ def add_task():
         connection.execute(
             """
             INSERT INTO tasks
-            (subject, task, deadline, priority, status)
-            VALUES (?, ?, ?, ?, ?)
+            (subject, task, deadline, priority, status, user_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 subject,
                 task,
                 deadline,
                 priority,
-                "Pending"
+                "Pending",
+                uid()
             )
         )
 
@@ -813,8 +1339,9 @@ def tasks():
         """
         SELECT *
         FROM tasks
+        WHERE user_id = ?
         ORDER BY deadline
-        """
+        """, (uid(),)
     ).fetchall()
 
     connection.close()
@@ -833,9 +1360,9 @@ def complete_task(task_id):
         """
         UPDATE tasks
         SET status = ?
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
-        ("Completed", task_id)
+        ("Completed", task_id, uid())
     )
 
     connection.commit()
@@ -851,9 +1378,9 @@ def delete_task(task_id):
     connection.execute(
         """
         DELETE FROM tasks
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
-        (task_id,)
+        (task_id, uid())
     )
 
     connection.commit()
@@ -870,6 +1397,7 @@ def timetable():
         """
         SELECT *
         FROM timetable
+        WHERE user_id = ?
         ORDER BY
             CASE schedule_type
                 WHEN 'one-time' THEN 1
@@ -880,7 +1408,7 @@ def timetable():
             start_date,
             date,
             start_time
-        """
+        """, (uid(),)
     ).fetchall()
 
     timetable_data = []
@@ -948,8 +1476,8 @@ def delete_subject_sessions():
     if not subject:
         return redirect(url_for("timetable"))
     connection = get_database_connection()
-    query = "SELECT id, google_event_id FROM timetable WHERE subject = ? AND schedule_type = 'one-time'"
-    params = [subject]
+    query = "SELECT id, google_event_id FROM timetable WHERE subject = ? AND schedule_type = 'one-time' AND user_id = ?"
+    params = [subject, uid()]
     if scope == "upcoming":
         query += " AND date >= ? AND status != 'Completed'"
         params.append(datetime.date.today().strftime("%Y-%m-%d"))
@@ -1113,9 +1641,10 @@ def add_timetable():
                 google_event_id,
                 schedule_type,
                 start_date,
-                end_date
+                end_date,
+                user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 subject,
@@ -1128,7 +1657,8 @@ def add_timetable():
                 None,
                 schedule_type,
                 start_date,
-                end_date
+                end_date,
+                uid()
             )
         )
 
@@ -1184,9 +1714,9 @@ def edit_timetable(timetable_id):
         """
         SELECT *
         FROM timetable
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
-        (timetable_id,)
+        (timetable_id, uid())
     ).fetchone()
 
     connection.close()
@@ -1461,9 +1991,9 @@ def delete_timetable(timetable_id):
         """
         SELECT *
         FROM timetable
-        WHERE id = ?
+        WHERE id = ? AND user_id = ?
         """,
-        (timetable_id,)
+        (timetable_id, uid())
     ).fetchone()
 
     if not session:
@@ -1635,9 +2165,10 @@ def delete_timetable(timetable_id):
 PROCESSING_JOBS = {}
 PROCESSING_LOCK = threading.Lock()
 
+# Subject colours come from the design palette only (lavender / ink / lime + tints),
+# defined as CSS variables so they adapt to light and dark mode.
 SUBJECT_COLORS = [
-    "#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6",
-    "#ec4899", "#14b8a6", "#f97316", "#84cc16",
+    "var(--lav)", "var(--ink-c)", "var(--lime)", "var(--lav-2)", "var(--grey-c)", "var(--lime-2)",
 ]
 
 
@@ -1649,11 +2180,11 @@ def subject_color_map(names=None):
         rows = connection.execute(
             """
             SELECT name FROM (
-                SELECT subject AS name, MIN(id) AS first FROM timetable GROUP BY subject
+                SELECT subject AS name, -COUNT(*) AS first FROM timetable WHERE user_id = ? GROUP BY subject
                 UNION ALL
-                SELECT name, MIN(id) + 1000000 AS first FROM subjects GROUP BY name
+                SELECT name, MIN(id) + 1000000 AS first FROM subjects WHERE user_id = ? GROUP BY name
             ) GROUP BY name ORDER BY MIN(first)
-            """
+            """, (uid(), uid())
         ).fetchall()
         connection.close()
         ordered = [r["name"] for r in rows]
@@ -1713,10 +2244,12 @@ def load_subjects_for_syllabus(connection, syllabus_id, include=None):
     return subjects
 
 
-def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline, study_hours):
+def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline, study_hours, user_id=None):
     """Stores subjects/topics, generates the plan and returns the new plan id."""
     extracted_subjects = processing_result["subjects"]
     raw_text = processing_result.get("raw_text", "")
+    if user_id is None:
+        user_id = uid()
 
     connection = get_database_connection()
     cursor = connection.cursor()
@@ -1724,24 +2257,24 @@ def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline
     cursor.execute(
         """
         INSERT INTO syllabuses
-        (subject, filename, file_type, deadline, daily_hours, extracted_text, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        (subject, filename, file_type, deadline, daily_hours, extracted_text, created_at, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (first_subject, safe_filename, extension, deadline, study_hours,
-         raw_text[:20000], datetime.datetime.now().isoformat())
+         raw_text[:20000], datetime.datetime.now().isoformat(), user_id)
     )
     syllabus_id = cursor.lastrowid
 
     for subj_name, subj_info in extracted_subjects.items():
         cursor.execute(
             """
-            INSERT INTO subjects (syllabus_id, name, code, total_topics, created_at, is_lab, contact_hours)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO subjects (syllabus_id, name, code, total_topics, created_at, is_lab, contact_hours, user_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (syllabus_id, subj_name, subj_info.get("code", ""),
              subj_info.get("total_topics", len(subj_info.get("topics", []))),
              datetime.datetime.now().isoformat(),
-             1 if subj_info.get("is_lab") else 0, subj_info.get("contact_hours"))
+             1 if subj_info.get("is_lab") else 0, subj_info.get("contact_hours"), user_id)
         )
         subject_id = cursor.lastrowid
 
@@ -1753,12 +2286,12 @@ def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline
                 """
                 INSERT INTO topics
                 (subject_id, syllabus_id, unit_name, topic_name, subtopics, difficulty,
-                 predicted_hours, preferred_period, status, description, syllabus_hours, module_number)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 predicted_hours, preferred_period, status, description, syllabus_hours, module_number, user_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (subject_id, syllabus_id, topic.get("unit_name", "Topics"), topic.get("topic_name", ""),
                  json.dumps(topic.get("subtopics", [])), t_diff, t_pred_hours, t_period, "Pending",
-                 topic.get("description", ""), topic.get("syllabus_hours"), topic.get("module_number"))
+                 topic.get("description", ""), topic.get("syllabus_hours"), topic.get("module_number"), user_id)
             )
     connection.commit()
 
@@ -1767,7 +2300,8 @@ def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline
         subjects_dict=subjects,
         deadline_date_str=deadline,
         daily_available_hours=study_hours,
-        connection=connection
+        connection=connection,
+        user_id=user_id
     )
     plan_data["options"] = {
         "included_subjects": list(subjects.keys()),
@@ -1790,13 +2324,13 @@ def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline
     cursor.execute(
         """
         INSERT INTO generated_plans
-        (syllabus_id, plan_data, deadline, daily_hours, total_hours, feasibility, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (syllabus_id, plan_data, deadline, daily_hours, total_hours, feasibility, status, created_at, user_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (syllabus_id, json.dumps(plan_data), deadline, study_hours,
          plan_data.get("total_predicted_hours", 0.0),
          "Feasible" if plan_data.get("validation", {}).get("is_feasible") else "Warning",
-         "draft", datetime.datetime.now().isoformat())
+         "draft", datetime.datetime.now().isoformat(), user_id)
     )
     plan_id = cursor.lastrowid
     connection.commit()
@@ -1804,7 +2338,7 @@ def save_syllabus_and_plan(processing_result, safe_filename, extension, deadline
     return plan_id
 
 
-def _run_processing_job(job_id, file_path, extension, safe_filename, deadline, study_hours):
+def _run_processing_job(job_id, file_path, extension, safe_filename, deadline, study_hours, user_id=None):
     def progress(done, total, message):
         with PROCESSING_LOCK:
             job = PROCESSING_JOBS[job_id]
@@ -1816,7 +2350,7 @@ def _run_processing_job(job_id, file_path, extension, safe_filename, deadline, s
             raise ValueError(result.get("error") or "No usable curriculum content was detected.")
         with PROCESSING_LOCK:
             PROCESSING_JOBS[job_id]["message"] = "Building your study plan..."
-        plan_id = save_syllabus_and_plan(result, safe_filename, extension, deadline, study_hours)
+        plan_id = save_syllabus_and_plan(result, safe_filename, extension, deadline, study_hours, user_id=user_id)
         with PROCESSING_LOCK:
             PROCESSING_JOBS[job_id].update({"status": "done", "plan_id": plan_id, "message": "Done"})
     except Exception as error:
@@ -1867,11 +2401,11 @@ def add_syllabus():
                 PROCESSING_JOBS[job_id] = {
                     "status": "running", "done": 0, "total": 0, "message": "Starting...",
                     "plan_id": None, "error": None, "filename": filename,
-                    "started": datetime.datetime.now().isoformat(),
+                    "started": datetime.datetime.now().isoformat(), "user_id": uid(),
                 }
             worker = threading.Thread(
                 target=_run_processing_job,
-                args=(job_id, file_path, extension, safe_filename, deadline, study_hours),
+                args=(job_id, file_path, extension, safe_filename, deadline, study_hours, uid()),
                 daemon=True,
             )
             worker.start()
@@ -1891,7 +2425,7 @@ def add_syllabus():
 
     connection = get_database_connection()
     from scheduler import get_student_availability, calculate_student_capacity
-    capacity = calculate_student_capacity(get_student_availability(connection))
+    capacity = calculate_student_capacity(get_student_availability(connection, user_id=uid()))
     connection.close()
     return render_template("add_syllabus.html", capacity=capacity)
 
@@ -1919,10 +2453,10 @@ def add_sample_syllabus():
             PROCESSING_JOBS[job_id] = {
                 "status": "running", "done": 0, "total": 0, "message": "Starting...",
                 "plan_id": None, "error": None, "filename": "Sample: BCA Semester V syllabus",
-                "started": datetime.datetime.now().isoformat(),
+                "started": datetime.datetime.now().isoformat(), "user_id": uid(),
             }
         threading.Thread(target=_run_processing_job,
-                         args=(job_id, file_path, "pdf", safe_filename, deadline, study_hours),
+                         args=(job_id, file_path, "pdf", safe_filename, deadline, study_hours, uid()),
                          daemon=True).start()
         return redirect(url_for("processing_status_page", job_id=job_id))
 
@@ -1937,6 +2471,8 @@ def add_sample_syllabus():
 def processing_status_page(job_id):
     with PROCESSING_LOCK:
         job = dict(PROCESSING_JOBS.get(job_id) or {})
+    if job and job.get("user_id") != uid():
+        job = {}
     if not job:
         flash("That processing job was not found. Please upload the syllabus again.")
         return redirect(url_for("add_syllabus"))
@@ -1947,7 +2483,7 @@ def processing_status_page(job_id):
 def processing_status_api(job_id):
     with PROCESSING_LOCK:
         job = dict(PROCESSING_JOBS.get(job_id) or {})
-    if not job:
+    if not job or job.get("user_id") != uid():
         return jsonify({"status": "missing"}), 404
     if job.get("status") == "done":
         job["redirect"] = url_for("plan_preview", plan_id=job["plan_id"])
@@ -2001,7 +2537,7 @@ def build_preview_tree(connection, syllabus_id, plan_data):
 @app.route("/plan-preview/<int:plan_id>")
 def plan_preview(plan_id):
     connection = get_database_connection()
-    plan_row = connection.execute("SELECT * FROM generated_plans WHERE id = ?", (plan_id,)).fetchone()
+    plan_row = connection.execute("SELECT * FROM generated_plans WHERE id = ? AND user_id = ?", (plan_id, uid())).fetchone()
 
     if not plan_row:
         connection.close()
@@ -2051,7 +2587,7 @@ def plan_preview(plan_id):
 @app.route("/plan-preview/<int:plan_id>/regenerate", methods=["POST"])
 def regenerate_plan(plan_id):
     connection = get_database_connection()
-    plan_row = connection.execute("SELECT * FROM generated_plans WHERE id = ?", (plan_id,)).fetchone()
+    plan_row = connection.execute("SELECT * FROM generated_plans WHERE id = ? AND user_id = ?", (plan_id, uid())).fetchone()
     if not plan_row or plan_row["status"] == "approved":
         connection.close()
         return redirect(url_for("plan_preview", plan_id=plan_id))
@@ -2078,7 +2614,8 @@ def regenerate_plan(plan_id):
         subjects_dict=subjects,
         deadline_date_str=deadline,
         daily_available_hours=study_hours,
-        connection=connection
+        connection=connection,
+        user_id=uid()
     )
     options = old_data.get("options", {})
     options["included_subjects"] = list(subjects.keys())
@@ -2104,8 +2641,8 @@ def approve_plan(plan_id):
     connection = get_database_connection()
 
     plan_row = connection.execute(
-        "SELECT * FROM generated_plans WHERE id = ?",
-        (plan_id,)
+        "SELECT * FROM generated_plans WHERE id = ? AND user_id = ?",
+        (plan_id, uid())
     ).fetchone()
 
     if not plan_row:
@@ -2152,9 +2689,10 @@ def approve_plan(plan_id):
                 start_date,
                 end_date,
                 status,
-                notes
+                notes,
+                user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 subj,
@@ -2169,7 +2707,8 @@ def approve_plan(plan_id):
                 date_str,
                 date_str,
                 "Pending",
-                notes
+                notes,
+                uid()
             )
         )
         timetable_id = cursor.lastrowid
@@ -2217,8 +2756,8 @@ def complete_session(session_id):
     connection = get_database_connection()
 
     session = connection.execute(
-        "SELECT * FROM timetable WHERE id = ?",
-        (session_id,)
+        "SELECT * FROM timetable WHERE id = ? AND user_id = ?",
+        (session_id, uid())
     ).fetchone()
 
     if session and session["status"] != "Completed":
@@ -2295,9 +2834,10 @@ def complete_session(session_id):
                 study_period,
                 study_date,
                 difficulty,
-                created_at
+                created_at,
+                user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -2309,23 +2849,25 @@ def complete_session(session_id):
                 period,
                 study_date,
                 2.5,
-                datetime.datetime.now().isoformat()
+                datetime.datetime.now().isoformat(),
+                uid()
             )
         )
 
         # Generated plans are one-time sessions.  Match their source topic so
         # dashboard topic progress reflects completed study work.
         if session["schedule_type"] == "one-time":
-            topic_name = re.sub(r" \(Part \d+\)$", "", session["topic"])
+            topic_name = re.sub(r" \(Part \d+(/\d+)?\)$", "", session["topic"])
             remaining_parts = connection.execute(
                 """
                 SELECT 1 FROM timetable
                 WHERE subject = ?
                   AND (topic = ? OR topic LIKE ?)
                   AND status != 'Completed'
+                  AND user_id = ?
                 LIMIT 1
                 """,
-                (session["subject"], topic_name, f"{topic_name} (Part %)")
+                (session["subject"], topic_name, f"{topic_name} (Part %)", uid())
             ).fetchone()
             if not remaining_parts:
                 connection.execute(
@@ -2333,9 +2875,9 @@ def complete_session(session_id):
                     UPDATE topics
                     SET status = 'Completed'
                     WHERE topic_name = ?
-                      AND subject_id IN (SELECT id FROM subjects WHERE name = ?)
+                      AND subject_id IN (SELECT id FROM subjects WHERE name = ? AND user_id = ?)
                     """,
-                    (topic_name, session["subject"])
+                    (topic_name, session["subject"], uid())
                 )
         connection.commit()
 
@@ -2358,7 +2900,7 @@ def complete_session(session_id):
 def study_history_view():
     connection = get_database_connection()
     history_records = connection.execute(
-        "SELECT * FROM study_history ORDER BY study_date DESC, id DESC"
+        "SELECT * FROM study_history WHERE user_id = ? ORDER BY study_date DESC, id DESC", (uid(),)
     ).fetchall()
     connection.close()
 
@@ -2409,9 +2951,10 @@ def log_study():
                 study_period,
                 study_date,
                 difficulty,
-                created_at
+                created_at,
+                user_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 None,
@@ -2423,7 +2966,8 @@ def log_study():
                 study_period,
                 study_date,
                 2.5,
-                datetime.datetime.now().isoformat()
+                datetime.datetime.now().isoformat(),
+                uid()
             )
         )
         connection.commit()
@@ -2449,6 +2993,7 @@ def availability():
     slots = connection.execute(
         """
         SELECT * FROM student_availability
+        WHERE user_id = ?
         ORDER BY
             CASE day_of_week
                 WHEN 'Monday' THEN 1
@@ -2461,7 +3006,7 @@ def availability():
                 ELSE 8
             END,
             start_time
-        """
+        """, (uid(),)
     ).fetchall()
     connection.close()
 
@@ -2501,10 +3046,10 @@ def add_availability_slot():
             connection = get_database_connection()
             connection.execute(
                 """
-                INSERT INTO student_availability (day_of_week, start_time, end_time, is_active)
-                VALUES (?, ?, ?, 1)
+                INSERT INTO student_availability (day_of_week, start_time, end_time, is_active, user_id)
+                VALUES (?, ?, ?, 1, ?)
                 """,
-                (day, start_time, end_time)
+                (day, start_time, end_time, uid())
             )
             connection.commit()
             connection.close()
@@ -2517,8 +3062,8 @@ def delete_availability_slot(slot_id):
     ensure_database()
     connection = get_database_connection()
     connection.execute(
-        "DELETE FROM student_availability WHERE id = ?",
-        (slot_id,)
+        "DELETE FROM student_availability WHERE id = ? AND user_id = ?",
+        (slot_id, uid())
     )
     connection.commit()
     connection.close()
@@ -2529,14 +3074,15 @@ def delete_availability_slot(slot_id):
 def reset_data():
     """Start fresh: clears the chosen data after saving a backup copy of database.db."""
     connection = get_database_connection()
+    me = uid()
     counts = {
-        "tasks": connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0],
-        "timetable": connection.execute("SELECT COUNT(*) FROM timetable").fetchone()[0],
+        "tasks": connection.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ?", (me,)).fetchone()[0],
+        "timetable": connection.execute("SELECT COUNT(*) FROM timetable WHERE user_id = ?", (me,)).fetchone()[0],
         "calendar": connection.execute(
-            "SELECT COUNT(*) FROM timetable WHERE google_event_id IS NOT NULL AND google_event_id != ''"
+            "SELECT COUNT(*) FROM timetable WHERE google_event_id IS NOT NULL AND google_event_id != '' AND user_id = ?", (me,)
         ).fetchone()[0],
-        "plans": connection.execute("SELECT COUNT(*) FROM syllabuses").fetchone()[0],
-        "history": connection.execute("SELECT COUNT(*) FROM study_history").fetchone()[0],
+        "plans": connection.execute("SELECT COUNT(*) FROM syllabuses WHERE user_id = ?", (me,)).fetchone()[0],
+        "history": connection.execute("SELECT COUNT(*) FROM study_history WHERE user_id = ?", (me,)).fetchone()[0],
     }
 
     if request.method == "GET":
@@ -2570,23 +3116,23 @@ def reset_data():
             event_ids = [
                 row["google_event_id"]
                 for row in connection.execute(
-                    "SELECT google_event_id FROM timetable WHERE google_event_id IS NOT NULL AND google_event_id != ''"
+                    "SELECT google_event_id FROM timetable WHERE google_event_id IS NOT NULL AND google_event_id != '' AND user_id = ?", (me,)
                 ).fetchall()
             ]
-        connection.execute("DELETE FROM timetable_exceptions")
-        connection.execute("DELETE FROM timetable")
+        connection.execute("DELETE FROM timetable_exceptions WHERE timetable_id IN (SELECT id FROM timetable WHERE user_id = ?)", (me,))
+        connection.execute("DELETE FROM timetable WHERE user_id = ?", (me,))
         summary.append(f"{counts['timetable']} sessions")
     if "tasks" in chosen:
-        connection.execute("DELETE FROM tasks")
+        connection.execute("DELETE FROM tasks WHERE user_id = ?", (me,))
         summary.append(f"{counts['tasks']} tasks")
     if "plans" in chosen:
-        connection.execute("DELETE FROM generated_plans")
-        connection.execute("DELETE FROM topics")
-        connection.execute("DELETE FROM subjects")
-        connection.execute("DELETE FROM syllabuses")
+        connection.execute("DELETE FROM generated_plans WHERE user_id = ?", (me,))
+        connection.execute("DELETE FROM topics WHERE user_id = ?", (me,))
+        connection.execute("DELETE FROM subjects WHERE user_id = ?", (me,))
+        connection.execute("DELETE FROM syllabuses WHERE user_id = ?", (me,))
         summary.append(f"{counts['plans']} syllabus plans")
     if "history" in chosen:
-        connection.execute("DELETE FROM study_history")
+        connection.execute("DELETE FROM study_history WHERE user_id = ?", (me,))
         summary.append(f"{counts['history']} history records")
     connection.commit()
     connection.close()

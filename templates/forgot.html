@@ -1,0 +1,23 @@
+{% extends "auth_base.html" %}
+{% block title %}Forgot password · Smart Study Planner{% endblock %}
+
+{% block heading %}
+<h1 class="auth-title">Reset your password</h1>
+<p class="auth-sub">Get back into your account</p>
+{% endblock %}
+
+{% block card %}
+<p>Smart Study Planner doesn't send emails yet. You can get back in two ways:</p>
+<ol class="steps" style="margin:14px 0 18px">
+    <li><span class="step-num">1</span><div><strong>Continue with Google</strong>
+        <p>Use the Google account with the same email. It signs you into your existing account.</p></div></li>
+    <li><span class="step-num">2</span><div><strong>Set a new password</strong>
+        <p>Once you're in, open <em>Account</em> from the top of any page and choose a new password.</p></div></li>
+</ol>
+{% set next_url = '/account' %}
+{% include "_google_button.html" %}
+{% endblock %}
+
+{% block below %}
+<p class="auth-switch"><a href="{{ url_for('login') }}">Back to sign in</a></p>
+{% endblock %}

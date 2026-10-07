@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Sign in · Smart Study Planner{% endblock %}</title>
+    <script>!function(){try{var t=localStorage.getItem("theme");if(!t){t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.setAttribute("data-theme",t)}catch(e){}}();</script>
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+    <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
+</head>
+<body class="auth-body">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+        <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2zM4 21V5M19 19v2H6"/></symbol>
+        <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4M12 17v.5"/></symbol>
+        <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
+    </defs>
+</svg>
+
+<main class="auth-wrap">
+    <div class="auth-logo"><svg><use href="#i-book"/></svg></div>
+    {% block heading %}{% endblock %}
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            {% for message in messages %}<div class="auth-flash">{{ message }}</div>{% endfor %}
+        {% endif %}
+    {% endwith %}
+
+    {% if error %}
+    <div class="auth-error" role="alert"><svg class="icon"><use href="#i-alert"/></svg><span>{{ error }}</span></div>
+    {% endif %}
+
+    <section class="auth-card">
+        {% block card %}{% endblock %}
+    </section>
+
+    {% block below %}{% endblock %}
+
+    <nav class="auth-foot" aria-label="Footer">
+        <span>Smart Study Planner</span>
+        <a href="https://github.com/binayakmandal-hash/smart-study-planner">Source code</a>
+    </nav>
+</main>
+<script>
+document.querySelectorAll("form").forEach(function (f) {
+    f.addEventListener("submit", function () {
+        var b = f.querySelector("button[type=submit]"); if (b) { b.classList.add("btn-loading"); }
+    });
+});
+</script>
+</body>
+</html>

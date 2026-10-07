@@ -1,6 +1,8 @@
 # secrets & local data - never commit these
 credentials.json
 token.json
+google_login.json
+.secret_key
 database.db
 /uploads/
 /ocr_cache/

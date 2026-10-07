@@ -11,6 +11,7 @@ if os.path.exists("database.db") and not os.environ.get("STUDYPLANNER_DB"):
     shutil.copyfile("database.db", _TEST_DB)
     os.environ["STUDYPLANNER_DB"] = _TEST_DB
 os.environ["STUDYPLANNER_CALENDAR_SYNC"] = "0"
+os.environ.setdefault("STUDYPLANNER_LOGIN", "0")
 
 import datetime
 import unittest

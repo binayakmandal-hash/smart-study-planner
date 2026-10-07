@@ -3,7 +3,7 @@
 {% block title %}Study Timetable · Smart Study Planner{% endblock %}
 
 {% macro session_row(s, date, allow_done=True) -%}
-{% set c = colors.get(s['subject'], '#5b5bd6') %}
+{% set c = colors.get(s['subject'], 'var(--lav)') %}
 {% set done = s['status'] == 'Completed' %}
 <div class="session {% if done %}is-done{% endif %}" style="--c: {{ c }}"
      data-id="{{ s['id'] }}" data-date="{{ date }}" data-start="{{ s['start_time'] }}" data-end="{{ s['end_time'] }}"
@@ -87,7 +87,7 @@
     <div class="grid grid-2">
         {% for item in recurring %}
         {% set session = item["session"] %}
-        <div class="card" style="--c: {{ colors.get(session['subject'], '#5b5bd6') }}">
+        <div class="card" style="--c: {{ colors.get(session['subject'], 'var(--lav)') }}">
             <div class="card-head">
                 <h3><span class="dot" style="background: var(--c)"></span> {{ session["subject"] }}</h3>
                 <span class="badge badge-primary">{% if session['schedule_type'] == 'daily' %}Every day{% else %}Every {{ session['day'] }}{% endif %}</span>
@@ -147,7 +147,7 @@
             <tbody>
             {% for name, count in subject_counts %}
             <tr>
-                <td><span class="subject-chip"><span class="dot" style="background: {{ colors.get(name, '#5b5bd6') }}"></span>{{ name }}</span></td>
+                <td><span class="subject-chip"><span class="dot" style="background: {{ colors.get(name, 'var(--lav)') }}"></span>{{ name }}</span></td>
                 <td>{{ count }}</td>
                 <td style="text-align:right">
                     <form method="POST" action="/timetable/delete-subject" data-confirm="Delete all {{ count }} upcoming sessions of {{ name }}?">

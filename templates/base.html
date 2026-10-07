@@ -5,10 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Smart Study Planner{% endblock %}</title>
     <script>!function(){try{var t=localStorage.getItem("theme");if(!t){t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light"}document.documentElement.setAttribute("data-theme",t)}catch(e){}}();</script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+    <link href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -38,6 +38,7 @@
         <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0"/></symbol>
         <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
         <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 2.5h8l5 5V21a.5.5 0 0 1-.5.5h-12A.5.5 0 0 1 6 21zM14 2.5V8h5"/></symbol>
+        <symbol id="i-logout" viewBox="0 0 24 24"><path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 16l-4-4 4-4M6 12h10"/></symbol>
         <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
         <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20zM12 10v4M12 17v.5"/></symbol>
         <symbol id="i-google" viewBox="0 0 24 24"><path d="M21 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h5a4.3 4.3 0 0 1-1.9 2.8v2.3h3c1.8-1.6 2.9-4 2.9-6.8zM12 21c2.5 0 4.6-.8 6.1-2.2l-3-2.3c-.8.6-1.9.9-3.1.9a5.4 5.4 0 0 1-5.1-3.7H3.8v2.4A9 9 0 0 0 12 21zM6.9 13.7a5.4 5.4 0 0 1 0-3.4V7.9H3.8a9 9 0 0 0 0 8.2zM12 6.6c1.3 0 2.5.5 3.5 1.4l2.6-2.6A9 9 0 0 0 3.8 7.9l3.1 2.4A5.4 5.4 0 0 1 12 6.6z"/></symbol>
@@ -60,14 +61,11 @@
             <span class="brand-text">Smart Study<small>Planner</small></span>
         </a>
 
-        <a href="/add-syllabus" class="btn btn-primary btn-block sidebar-cta {% if active_page == 'upload' %}is-active{% endif %}">
-            <svg class="icon"><use href="#i-upload"/></svg> Upload Syllabus
-        </a>
-
         <nav class="side-nav" aria-label="Main">
             {% for key, href, label, icon in nav %}
             <a href="{{ href }}" class="side-link {% if active_page == key %}active{% endif %}">
                 <svg class="icon"><use href="#{{ icon }}"/></svg><span>{{ label }}</span>
+                {% if nav_counts.get(key) %}<span class="nav-count">{{ nav_counts[key] }}</span>{% endif %}
             </a>
             {% endfor %}
         </nav>
@@ -76,18 +74,26 @@
             {% if calendar_enabled %}
             <div class="calendar-chip" title="Approved plans sync to Google Calendar with a 10-minute reminder">
                 <svg class="icon"><use href="#i-google"/></svg>
-                <span>Calendar reminders on approval</span>
+                <span>Google Calendar reminders on</span>
             </div>
             {% endif %}
             <a href="/reset" class="side-link danger-link {% if active_page == 'reset' %}active{% endif %}">
-                <svg class="icon"><use href="#i-reset"/></svg><span>Reset / start fresh</span>
+                <svg class="icon"><use href="#i-reset"/></svg><span>Reset planner</span>
             </a>
-            <button class="theme-toggle-btn side-link" id="themeToggle" type="button" aria-label="Toggle theme">
-                <svg class="icon theme-icon-dark"><use href="#i-moon"/></svg>
-                <svg class="icon theme-icon-light"><use href="#i-sun"/></svg>
-                <span class="theme-label">Dark mode</span>
-            </button>
         </div>
+
+        <a href="/add-syllabus" class="sidebar-cta {% if active_page == 'upload' %}is-active{% endif %}">
+            <strong>New semester?</strong>
+            <span>Upload your syllabus and get a full plan in minutes.</span>
+            <svg class="cta-art" viewBox="0 0 160 64" aria-hidden="true">
+                <rect x="14" y="40" width="74" height="12" rx="6" fill="#1c1c1e"/>
+                <rect x="22" y="27" width="64" height="12" rx="6" fill="#b5a8f5"/>
+                <rect x="10" y="14" width="70" height="12" rx="6" fill="#fff"/>
+                <circle cx="120" cy="32" r="22" fill="#1c1c1e"/>
+                <path d="M110 32l7 7 13-14" stroke="#d7f25e" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="cta-btn">Upload syllabus</span>
+        </a>
     </aside>
 
     <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
@@ -102,10 +108,33 @@
         </header>
 
         <main class="container">
+            <div class="panel-top">
+                <a class="who" href="{{ url_for('account') }}" title="Your account">
+                    <span class="avatar">{% if profile_picture %}<img src="{{ profile_picture }}" alt="" referrerpolicy="no-referrer">{% else %}{{ profile_initials }}{% endif %}</span>
+                    <div><strong>{{ profile_name }}</strong><span>{{ profile_sub }}</span></div>
+                </a>
+                <div class="top-actions">
+                    <span class="pill pill-muted pill-date">{{ today_label }}</span>
+                    <a href="/timetable" class="pill"><svg class="icon"><use href="#i-calendar"/></svg> Today</a>
+                    <button class="icon-btn theme-toggle-btn" id="themeToggle" type="button" aria-label="Switch light or dark mode">
+                        <svg class="icon theme-icon-dark"><use href="#i-moon"/></svg>
+                        <svg class="icon theme-icon-light"><use href="#i-sun"/></svg>
+                        <span class="theme-label" hidden>Dark mode</span>
+                    </button>
+                    {% if login_required %}
+                    <form method="POST" action="{{ url_for('logout') }}">
+                        <button type="submit" class="icon-btn no-disable" title="Sign out" aria-label="Sign out">
+                            <svg class="icon"><use href="#i-logout"/></svg>
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+
             {% if demo_mode %}
             <div class="banner banner-info demo-banner">
                 <svg class="icon"><use href="#i-sparkles"/></svg>
-                <div><p class="mb-0"><strong>Public demo.</strong> Everyone shares this data and it may reset at any time. Google Calendar sync is turned off here. Try it with the <a href="/add-syllabus">sample syllabus</a>.</p></div>
+                <div><p class="mb-0"><strong>Public demo.</strong> Your data is private to your account, but this free server resets now and then, so accounts and plans may disappear. Google Calendar sync is turned off here. Try it with the <a href="/add-syllabus">sample syllabus</a>.</p></div>
             </div>
             {% endif %}
             {% with messages = get_flashed_messages() %}

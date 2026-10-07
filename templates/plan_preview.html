@@ -135,7 +135,7 @@
                 <div class="day-col">
                     <h4><span>{{ d.day[:3] }}, {{ d.date[5:] }}</span><span class="muted">{{ d.hours }} h</span></h4>
                     {% for s in d.sessions %}
-                    <div class="mini-session" style="--c: {{ colors.get(s.subject, '#5b5bd6') }}">
+                    <div class="mini-session" style="--c: {{ colors.get(s.subject, 'var(--lav)') }}">
                         <div class="t">{{ s.start_time }}–{{ s.end_time }} · {{ s.preferred_period }}</div>
                         <p class="n">{{ s.topic }}</p>
                         <div class="s">{{ s.subject }}{% if s.kind == 'revision' %} · Revision{% endif %}</div>

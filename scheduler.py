@@ -80,7 +80,7 @@ def _period_of_minutes(minutes):
 # Availability
 # =============================================================================
 
-def get_student_availability(connection=None):
+def get_student_availability(connection=None, user_id=None):
     """
     Returns {day: [(start_min, end_min), ...]} from the student_availability table.
     If the student has configured ANY window, days without windows are treated as
@@ -89,9 +89,15 @@ def get_student_availability(connection=None):
     if not connection:
         return DEFAULT_AVAILABILITY
     try:
-        rows = connection.execute(
-            "SELECT day_of_week, start_time, end_time FROM student_availability WHERE is_active = 1"
-        ).fetchall()
+        if user_id is None:
+            rows = connection.execute(
+                "SELECT day_of_week, start_time, end_time FROM student_availability WHERE is_active = 1"
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT day_of_week, start_time, end_time FROM student_availability WHERE is_active = 1 AND user_id = ?",
+                (user_id,)
+            ).fetchall()
         if not rows:
             return DEFAULT_AVAILABILITY
         avail = {day: [] for day in DAY_NAMES}
@@ -149,14 +155,17 @@ def validate_deadline(total_predicted_hours, deadline_date_str, daily_available_
     }
 
 
-def get_existing_day_bookings(connection, date_str):
+def get_existing_day_bookings(connection, date_str, user_id=None):
     """Booked (start_min, end_min) intervals on a date from the timetable (one-time, daily, weekly, exceptions)."""
     if not connection:
         return []
     target_weekday = datetime.datetime.strptime(date_str, "%Y-%m-%d").strftime("%A")
     bookings = []
     try:
-        rows = connection.execute("SELECT * FROM timetable").fetchall()
+        if user_id is None:
+            rows = connection.execute("SELECT * FROM timetable").fetchall()
+        else:
+            rows = connection.execute("SELECT * FROM timetable WHERE user_id = ?", (user_id,)).fetchall()
         exceptions = {
             (row["timetable_id"], row["occurrence_date"])
             for row in connection.execute("SELECT timetable_id, occurrence_date FROM timetable_exceptions").fetchall()
@@ -275,7 +284,7 @@ def _subtract(intervals, blocks, pad):
     return [(s, e) for s, e in result if e - s >= MIN_SESSION_MINUTES]
 
 
-def build_free_time(start_date, end_date_exclusive, availability, connection, now=None):
+def build_free_time(start_date, end_date_exclusive, availability, connection, now=None, user_id=None):
     """[(date, day_name, [(start,end), ...]), ...] of usable study time."""
     days = []
     current = start_date
@@ -284,7 +293,7 @@ def build_free_time(start_date, end_date_exclusive, availability, connection, no
         date_str = current.strftime("%Y-%m-%d")
         day_name = current.strftime("%A")
         windows = list(availability.get(day_name, []))
-        bookings = get_existing_day_bookings(connection, date_str)
+        bookings = get_existing_day_bookings(connection, date_str, user_id=user_id)
         free = _subtract(windows, bookings, BREAK_MINUTES)
         if current == now.date():
             cutoff = now.hour * 60 + now.minute + 15
@@ -437,7 +446,7 @@ def validate_plan(sessions, availability):
 
 def generate_study_schedule(subjects_dict, deadline_date_str, daily_available_hours=None, connection=None,
                             start_date_str=None, student_availability_dict=None, include_revision=True,
-                            now=None):
+                            now=None, user_id=None):
     """
     Builds a complete, deadline-aware study plan for every subject -> module -> topic.
     Returns a dict (JSON-serialisable) used by the plan preview and approval.
@@ -450,7 +459,7 @@ def generate_study_schedule(subjects_dict, deadline_date_str, daily_available_ho
     end_exclusive = deadline_date if deadline_date > start_date else start_date + datetime.timedelta(days=1)
 
     availability = (student_availability_dict if student_availability_dict is not None
-                    else get_student_availability(connection))
+                    else get_student_availability(connection, user_id=user_id))
     student_capacity = calculate_student_capacity(availability)
     try:
         daily_cap_hours = float(daily_available_hours) if daily_available_hours else 0.0
@@ -487,7 +496,7 @@ def generate_study_schedule(subjects_dict, deadline_date_str, daily_available_ho
             })
 
     total_needed_hours = round(sum(i["needed_hours"] for i in topic_items), 1)
-    free_days = build_free_time(start_date, end_exclusive, availability, connection, now=now)
+    free_days = build_free_time(start_date, end_exclusive, availability, connection, now=now, user_id=user_id)
     capacity_minutes = sum(
         min(daily_limit_minutes, sum(e - s for s, e in windows)) for _, _, windows in free_days
     )
@@ -666,7 +675,7 @@ def generate_study_schedule(subjects_dict, deadline_date_str, daily_available_ho
     recommended_deadline = deadline_date_str
     if not is_feasible and topic_items:
         long_days = build_free_time(start_date, start_date + datetime.timedelta(days=240),
-                                    availability, connection, now=now)
+                                    availability, connection, now=now, user_id=user_id)
         full_work = _make_work(topic_items, 1.0)
         full = _place(full_work, subject_order, long_days, daily_limit_minutes)
         if full and not any(w["remaining"] for lst in full_work.values() for w in lst):
