@@ -98,8 +98,12 @@ For the Google sign-in button, see [GOOGLE_LOGIN_SETUP.md](GOOGLE_LOGIN_SETUP.md
 ## Tests
 
 ```bash
-python -m unittest test_suite test_planner_v2 test_auth
+python -m unittest test_suite
+python -m unittest test_planner_v2
+python -m unittest test_auth
 ```
+
+Run each file on its own: every test file prepares its own database when the app is imported.
 
 36 tests cover syllabus cleaning, subject detection, difficulty scoring, both ML models and retraining, deadline maths, conflict-free scheduling, sign-in, and the main pages. They need no Google account or internet, and run on every push through GitHub Actions. `test_e2e_syllabus_flow.py` runs the full upload → preview → approve flow.
 

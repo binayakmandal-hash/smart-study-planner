@@ -17,4 +17,7 @@ jobs:
           cache-dependency-path: requirements-render.txt
       # The lighter Render requirements (RapidOCR instead of EasyOCR/PyTorch) are enough for the tests.
       - run: pip install -r requirements-render.txt
-      - run: python -m unittest test_suite test_planner_v2 test_auth -v
+      # Each test file sets up its own database when the app is imported, so run them separately.
+      - run: python -m unittest test_suite -v
+      - run: python -m unittest test_planner_v2 -v
+      - run: python -m unittest test_auth -v
