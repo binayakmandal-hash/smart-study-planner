@@ -1,0 +1,20 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-render.txt
+      # The lighter Render requirements (RapidOCR instead of EasyOCR/PyTorch) are enough for the tests.
+      - run: pip install -r requirements-render.txt
+      - run: python -m unittest test_suite test_planner_v2 test_auth -v
